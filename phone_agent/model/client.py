@@ -18,7 +18,7 @@ class ModelConfig:
     api_key: str = "EMPTY"
     model_name: str = "autoglm-phone-9b"
     max_tokens: int = 3000
-    temperature: float = 0.0
+    temperature: float = 1.0
     top_p: float = 0.85
     frequency_penalty: float = 0.2
     extra_body: dict[str, Any] = field(default_factory=dict)
@@ -72,9 +72,9 @@ class ModelClient:
             messages=messages,
             model=self.config.model_name,
             max_tokens=self.config.max_tokens,
-            temperature=self.config.temperature,
-            top_p=self.config.top_p,
-            frequency_penalty=self.config.frequency_penalty,
+            temperature=1,
+            top_p=0.95,
+            frequency_penalty=0,
             extra_body=self.config.extra_body,
             stream=True,
         )

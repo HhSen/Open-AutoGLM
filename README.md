@@ -323,6 +323,47 @@ python main.py --list-apps
 python main.py --device-type hdc --list-apps
 ```
 
+### 直接控制手机 CLI（`phone-use`）
+
+如果你主要想直接控制手机，而不是使用 AI Agent，可以在仓库根目录执行一次安装：
+
+```bash
+./install.sh
+```
+
+默认会把 `phone-use` 全局安装到用户环境中。如果安装后找不到 `phone-use`，请把下面这一行加入 shell 配置（例如 `~/.zshrc`）：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+如果你希望只安装到当前环境，而不是全局安装，可以使用：
+
+```bash
+./install.sh --local
+```
+
+安装完成后，直接使用 `phone-use`：
+
+```bash
+# 查看所有直接控制动作
+phone-use phone --help
+
+# 截图
+phone-use phone screenshot --output screen.png
+
+# 点击一个坐标
+phone-use phone tap 540 960
+
+# 启动应用
+phone-use phone launch 地图
+
+# iOS 设备
+phone-use --device-type ios phone current-app
+```
+
+每个动作的说明、适用场景和最佳实践见 `docs/phone-cli.md`。
+
 ### Python API
 
 ```python

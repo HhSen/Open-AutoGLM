@@ -3,7 +3,8 @@
 Phone Agent CLI - AI-powered phone automation.
 
 Usage:
-    python main.py [OPTIONS]
+    python main.py [OPTIONS] [task]          # agent mode (AI-powered)
+    python main.py phone <action> [OPTIONS]  # direct device control (no AI)
 
 Environment Variables:
     PHONE_AGENT_BASE_URL: Model API base URL (default: http://localhost:8000/v1)
@@ -14,6 +15,7 @@ Environment Variables:
 """
 
 import argparse
+import base64
 import os
 import shutil
 import subprocess
@@ -301,7 +303,7 @@ def check_model_api(base_url: str, model_name: str, api_key: str = "EMPTY") -> b
             model=model_name,
             messages=[{"role": "user", "content": "Hi"}],
             max_tokens=5,
-            temperature=0.0,
+            temperature=1.0,
             stream=False,
         )
 
@@ -352,93 +354,120 @@ def check_model_api(base_url: str, model_name: str, api_key: str = "EMPTY") -> b
     return all_passed
 
 
-def parse_args() -> argparse.Namespace:
-    """Parse command line arguments."""
+def _add_common_device_args(parser: argparse.ArgumentParser) -> None:
+    """Add device selection arguments shared across agent mode and phone subcommands."""
+    parser.add_argument(
+        "--device-type",
+        type=str,
+        choices=["adb", "hdc", "ios"],
+        default=os.getenv("PHONE_AGENT_DEVICE_TYPE", "adb"),
+        help="Device type: adb for Android, hdc for HarmonyOS, ios for iPhone (default: adb)",
+    )
+    parser.add_argument(
+        "--device-id",
+        "-d",
+        type=str,
+        default=os.getenv("PHONE_AGENT_DEVICE_ID"),
+        help="Device ID (ADB serial / HDC target / iOS UDID)",
+    )
+    parser.add_argument(
+        "--wda-url",
+        type=str,
+        default=os.getenv("PHONE_AGENT_WDA_URL", "http://localhost:8100"),
+        help="WebDriverAgent URL for iOS (default: http://localhost:8100)",
+    )
+
+
+def _is_phone_mode(argv: list[str]) -> bool:
+    """
+    Return True when the user invoked phone-control mode.
+
+    We look for the literal token 'phone' as the first non-flag positional
+    argument.  Flags start with '-'; their values are skipped.
+    """
+    skip_next = False
+    # Options that consume a following value token
+    value_flags = {
+        "--device-type",
+        "--device-id",
+        "-d",
+        "--wda-url",
+        "--base-url",
+        "--model",
+        "--apikey",
+        "--max-steps",
+        "--connect",
+        "-c",
+        "--disconnect",
+        "--enable-tcpip",
+        "--lang",
+    }
+    for token in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if token in value_flags:
+            skip_next = True
+            continue
+        if token.startswith("-"):
+            continue
+        # First bare positional
+        return token == "phone"
+    return False
+
+
+def _build_agent_parser() -> argparse.ArgumentParser:
+    """Return an ArgumentParser for agent mode (existing behaviour)."""
     parser = argparse.ArgumentParser(
         description="Phone Agent - AI-powered phone automation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
+Agent mode — AI operates the device autonomously.
+
 Examples:
-    # Run with default settings (Android)
-    python main.py
+    phone-use
+    phone-use --base-url http://localhost:8000/v1
+    phone-use --apikey sk-xxxxx
+    phone-use --device-id emulator-5554
+    phone-use --connect 192.168.1.100:5555
+    phone-use --list-devices
+    phone-use --enable-tcpip
+    phone-use --list-apps
+    phone-use --device-type ios "Open Safari and search for iPhone tips"
+    phone-use --device-type ios --wda-url http://192.168.1.100:8100
+    phone-use --device-type ios --list-devices
+    phone-use --device-type ios --wda-status
+    phone-use --device-type ios --pair
 
-    # Specify model endpoint
-    python main.py --base-url http://localhost:8000/v1
-
-    # Use API key for authentication
-    python main.py --apikey sk-xxxxx
-
-    # Run with specific device
-    python main.py --device-id emulator-5554
-
-    # Connect to remote device
-    python main.py --connect 192.168.1.100:5555
-
-    # List connected devices
-    python main.py --list-devices
-
-    # Enable TCP/IP on USB device and get connection info
-    python main.py --enable-tcpip
-
-    # List supported apps
-    python main.py --list-apps
-
-    # iOS specific examples
-    # Run with iOS device
-    python main.py --device-type ios "Open Safari and search for iPhone tips"
-
-    # Use WiFi connection for iOS
-    python main.py --device-type ios --wda-url http://192.168.1.100:8100
-
-    # List connected iOS devices
-    python main.py --device-type ios --list-devices
-
-    # Check WebDriverAgent status
-    python main.py --device-type ios --wda-status
-
-    # Pair with iOS device
-    python main.py --device-type ios --pair
+Direct device control (no AI) — use the 'phone' subcommand:
+    phone-use phone --help
         """,
     )
-
-    # Model options
+    _add_common_device_args(parser)
     parser.add_argument(
         "--base-url",
         type=str,
         default=os.getenv("PHONE_AGENT_BASE_URL", "http://localhost:8000/v1"),
         help="Model API base URL",
     )
-
     parser.add_argument(
         "--model",
         type=str,
         default=os.getenv("PHONE_AGENT_MODEL", "autoglm-phone-9b"),
         help="Model name",
     )
-
     parser.add_argument(
         "--apikey",
         type=str,
         default=os.getenv("PHONE_AGENT_API_KEY", "EMPTY"),
         help="API key for model authentication",
     )
-
     parser.add_argument(
         "--max-steps",
         type=int,
         default=int(os.getenv("PHONE_AGENT_MAX_STEPS", "100")),
         help="Maximum steps per task",
     )
-
-    # Device options
-    parser.add_argument(
-        "--device-id",
-        "-d",
-        type=str,
-        default=os.getenv("PHONE_AGENT_DEVICE_ID"),
-        help="ADB device ID",
-    )
-
     parser.add_argument(
         "--connect",
         "-c",
@@ -446,7 +475,6 @@ Examples:
         metavar="ADDRESS",
         help="Connect to remote device (e.g., 192.168.1.100:5555)",
     )
-
     parser.add_argument(
         "--disconnect",
         type=str,
@@ -455,11 +483,9 @@ Examples:
         metavar="ADDRESS",
         help="Disconnect from remote device (or 'all' to disconnect all)",
     )
-
     parser.add_argument(
         "--list-devices", action="store_true", help="List connected devices and exit"
     )
-
     parser.add_argument(
         "--enable-tcpip",
         type=int,
@@ -468,36 +494,22 @@ Examples:
         metavar="PORT",
         help="Enable TCP/IP debugging on USB device (default port: 5555)",
     )
-
-    # iOS specific options
-    parser.add_argument(
-        "--wda-url",
-        type=str,
-        default=os.getenv("PHONE_AGENT_WDA_URL", "http://localhost:8100"),
-        help="WebDriverAgent URL for iOS (default: http://localhost:8100)",
-    )
-
     parser.add_argument(
         "--pair",
         action="store_true",
         help="Pair with iOS device (required for some operations)",
     )
-
     parser.add_argument(
         "--wda-status",
         action="store_true",
         help="Show WebDriverAgent status and exit (iOS only)",
     )
-
-    # Other options
     parser.add_argument(
         "--quiet", "-q", action="store_true", help="Suppress verbose output"
     )
-
     parser.add_argument(
         "--list-apps", action="store_true", help="List supported apps and exit"
     )
-
     parser.add_argument(
         "--lang",
         type=str,
@@ -505,23 +517,195 @@ Examples:
         default=os.getenv("PHONE_AGENT_LANG", "cn"),
         help="Language for system prompt (cn or en, default: cn)",
     )
-
-    parser.add_argument(
-        "--device-type",
-        type=str,
-        choices=["adb", "hdc", "ios"],
-        default=os.getenv("PHONE_AGENT_DEVICE_TYPE", "adb"),
-        help="Device type: adb for Android, hdc for HarmonyOS, ios for iPhone (default: adb)",
-    )
-
     parser.add_argument(
         "task",
         nargs="?",
         type=str,
         help="Task to execute (interactive mode if not provided)",
     )
+    return parser
 
-    return parser.parse_args()
+
+def _build_phone_parser() -> argparse.ArgumentParser:
+    """Return an ArgumentParser for phone-control mode."""
+    # Use the actual invocation name so `phone-use phone --help` shows
+    # "phone-use phone" rather than the hard-coded "main.py phone".
+    prog_name = os.path.basename(sys.argv[0])
+    parser = argparse.ArgumentParser(
+        prog=f"{prog_name} phone",
+        description="Directly operate the connected phone without running the AI agent.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+    phone-use phone tap 540 960
+    phone-use phone double-tap 540 960
+    phone-use phone long-press 540 960 --duration-ms 2000
+    phone-use phone swipe 540 1200 540 400 --duration-ms 400
+    phone-use phone type "Hello world"
+    phone-use phone clear
+    phone-use phone back
+    phone-use phone home
+    phone-use phone launch WeChat
+    phone-use phone screenshot --output screen.png
+    phone-use phone current-app
+    phone-use --device-type hdc phone tap 500 1000
+    phone-use --device-type ios phone tap 200 400
+        """,
+    )
+    # Device flags may appear either before or after 'phone' on the command
+    # line.  We parse the full argv (minus 'phone') so both positions work.
+    _add_common_device_args(parser)
+
+    action_parsers = parser.add_subparsers(dest="phone_action", metavar="ACTION")
+    action_parsers.required = True
+
+    # --- tap ---
+    p = action_parsers.add_parser("tap", help="Tap at pixel coordinates")
+    p.add_argument("x", type=int, help="X coordinate in pixels")
+    p.add_argument("y", type=int, help="Y coordinate in pixels")
+    p.add_argument(
+        "--delay",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Post-action delay in seconds (default: device timing config)",
+    )
+
+    # --- double-tap ---
+    p = action_parsers.add_parser("double-tap", help="Double-tap at pixel coordinates")
+    p.add_argument("x", type=int, help="X coordinate in pixels")
+    p.add_argument("y", type=int, help="Y coordinate in pixels")
+    p.add_argument(
+        "--delay",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Post-action delay in seconds",
+    )
+
+    # --- long-press ---
+    p = action_parsers.add_parser("long-press", help="Long-press at pixel coordinates")
+    p.add_argument("x", type=int, help="X coordinate in pixels")
+    p.add_argument("y", type=int, help="Y coordinate in pixels")
+    p.add_argument(
+        "--duration-ms",
+        type=int,
+        default=3000,
+        metavar="MS",
+        help="Press duration in milliseconds (default: 3000)",
+    )
+    p.add_argument(
+        "--delay",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Post-action delay in seconds",
+    )
+
+    # --- swipe ---
+    p = action_parsers.add_parser("swipe", help="Swipe between two pixel coordinates")
+    p.add_argument("start_x", type=int, help="Start X coordinate in pixels")
+    p.add_argument("start_y", type=int, help="Start Y coordinate in pixels")
+    p.add_argument("end_x", type=int, help="End X coordinate in pixels")
+    p.add_argument("end_y", type=int, help="End Y coordinate in pixels")
+    p.add_argument(
+        "--duration-ms",
+        type=int,
+        default=None,
+        metavar="MS",
+        help="Swipe duration in milliseconds",
+    )
+    p.add_argument(
+        "--delay",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Post-action delay in seconds",
+    )
+
+    # --- type ---
+    p = action_parsers.add_parser("type", help="Type text into the focused field")
+    p.add_argument("text", type=str, help="Text to type")
+
+    # --- clear ---
+    action_parsers.add_parser("clear", help="Clear text in the focused field")
+
+    # --- back ---
+    p = action_parsers.add_parser("back", help="Press the back button")
+    p.add_argument(
+        "--delay",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Post-action delay in seconds",
+    )
+
+    # --- home ---
+    p = action_parsers.add_parser("home", help="Go to the home screen")
+    p.add_argument(
+        "--delay",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Post-action delay in seconds",
+    )
+
+    # --- launch ---
+    p = action_parsers.add_parser("launch", help="Launch an app by name")
+    p.add_argument(
+        "app_name", type=str, help="App name (e.g. WeChat, Safari, Settings)"
+    )
+    p.add_argument(
+        "--delay",
+        type=float,
+        default=None,
+        metavar="SECONDS",
+        help="Post-action delay in seconds",
+    )
+
+    # --- screenshot ---
+    p = action_parsers.add_parser(
+        "screenshot", help="Capture a screenshot and save to file"
+    )
+    p.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        required=True,
+        metavar="PATH",
+        help="Output file path (e.g. screen.png)",
+    )
+
+    # --- current-app ---
+    action_parsers.add_parser("current-app", help="Print the currently active app")
+
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    """Parse command line arguments.
+
+    Routes to the agent-mode parser or the phone-control parser depending on
+    whether 'phone' appears as the first non-flag positional token in sys.argv.
+    """
+    raw_argv = sys.argv[1:]
+
+    if _is_phone_mode(raw_argv):
+        # Strip the literal 'phone' token and parse the remainder with the
+        # phone parser, keeping any global flags (--device-type etc.) that
+        # appeared before 'phone'.
+        phone_idx = next(i for i, t in enumerate(raw_argv) if t == "phone")
+        # Flags before 'phone' + everything after 'phone'
+        phone_argv = raw_argv[:phone_idx] + raw_argv[phone_idx + 1 :]
+        parser = _build_phone_parser()
+        args = parser.parse_args(phone_argv)
+        args.command = "phone"
+        return args
+    else:
+        parser = _build_agent_parser()
+        args = parser.parse_args(raw_argv)
+        args.command = None
+        return args
 
 
 def handle_ios_device_commands(args) -> bool:
@@ -681,9 +865,279 @@ def handle_device_commands(args) -> bool:
     return False
 
 
+def run_phone_command(args: argparse.Namespace) -> None:
+    """
+    Execute a direct phone control command without running the AI agent.
+
+    Dispatches to the appropriate device backend (ADB / HDC / iOS) based on
+    --device-type, then calls the requested action and prints the result.
+    """
+    # Resolve device type from whichever parser captured it (parent or phone sub-parser).
+    device_type_str: str = getattr(args, "device_type", "adb")
+    device_id: str | None = getattr(args, "device_id", None)
+    wda_url: str = getattr(args, "wda_url", "http://localhost:8100")
+
+    if device_type_str == "adb":
+        device_type = DeviceType.ADB
+    elif device_type_str == "hdc":
+        device_type = DeviceType.HDC
+    else:
+        device_type = DeviceType.IOS
+
+    # --- resolve action name (may be None if user typed just 'phone') ---
+    phone_action: str | None = getattr(args, "phone_action", None)
+    if not phone_action:
+        # Print usage hint and exit
+        print("Usage: python main.py phone <action> [options]")
+        print("Run 'python main.py phone --help' for available actions.")
+        sys.exit(1)
+
+    # ------------------------------------------------------------------ #
+    # iOS — delegate everything through xctest module + WDA session       #
+    # ------------------------------------------------------------------ #
+    if device_type == DeviceType.IOS:
+        import phone_agent.xctest as xctest
+        from phone_agent.xctest import XCTestConnection
+
+        conn = XCTestConnection(wda_url=wda_url)
+        if not conn.is_wda_ready(timeout=5):
+            print(f"Error: WebDriverAgent is not reachable at {wda_url}")
+            print("Make sure WDA is running and port forwarding is set up.")
+            sys.exit(1)
+
+        ok, session_id = conn.start_wda_session()
+        if not ok or not session_id:
+            print("Error: Failed to create a WDA session.")
+            sys.exit(1)
+
+        try:
+            if phone_action == "tap":
+                xctest.tap(
+                    args.x,
+                    args.y,
+                    wda_url=wda_url,
+                    session_id=session_id,
+                    delay=args.delay if args.delay is not None else 1.0,
+                )
+                print(f"Tapped ({args.x}, {args.y})")
+
+            elif phone_action == "double-tap":
+                xctest.double_tap(
+                    args.x,
+                    args.y,
+                    wda_url=wda_url,
+                    session_id=session_id,
+                    delay=args.delay if args.delay is not None else 1.0,
+                )
+                print(f"Double-tapped ({args.x}, {args.y})")
+
+            elif phone_action == "long-press":
+                xctest.long_press(
+                    args.x,
+                    args.y,
+                    duration=args.duration_ms / 1000.0,
+                    wda_url=wda_url,
+                    session_id=session_id,
+                    delay=args.delay if args.delay is not None else 1.0,
+                )
+                print(f"Long-pressed ({args.x}, {args.y}) for {args.duration_ms} ms")
+
+            elif phone_action == "swipe":
+                xctest.swipe(
+                    args.start_x,
+                    args.start_y,
+                    args.end_x,
+                    args.end_y,
+                    duration=args.duration_ms / 1000.0 if args.duration_ms else None,
+                    wda_url=wda_url,
+                    session_id=session_id,
+                    delay=args.delay if args.delay is not None else 1.0,
+                )
+                print(
+                    f"Swiped ({args.start_x}, {args.start_y}) -> ({args.end_x}, {args.end_y})"
+                )
+
+            elif phone_action == "type":
+                from phone_agent.xctest.input import type_text as xctest_type
+
+                xctest_type(args.text, wda_url=wda_url, session_id=session_id)
+                print(f"Typed: {args.text!r}")
+
+            elif phone_action == "clear":
+                from phone_agent.xctest.input import clear_text as xctest_clear
+
+                xctest_clear(wda_url=wda_url, session_id=session_id)
+                print("Cleared text")
+
+            elif phone_action == "back":
+                xctest.back(
+                    wda_url=wda_url,
+                    session_id=session_id,
+                    delay=args.delay if args.delay is not None else 1.0,
+                )
+                print("Pressed back")
+
+            elif phone_action == "home":
+                xctest.home(
+                    wda_url=wda_url,
+                    session_id=session_id,
+                    delay=args.delay if args.delay is not None else 1.0,
+                )
+                print("Went to home screen")
+
+            elif phone_action == "launch":
+                success = xctest.launch_app(
+                    args.app_name,
+                    wda_url=wda_url,
+                    session_id=session_id,
+                    delay=args.delay if args.delay is not None else 1.0,
+                )
+                if success:
+                    print(f"Launched: {args.app_name}")
+                else:
+                    print(f"Error: Could not launch app '{args.app_name}'")
+                    print(
+                        "Run 'python main.py --device-type ios --list-apps' to see supported apps."
+                    )
+                    sys.exit(1)
+
+            elif phone_action == "screenshot":
+                from phone_agent.xctest.screenshot import (
+                    get_screenshot as xctest_screenshot,
+                )
+
+                shot = xctest_screenshot(
+                    wda_url=wda_url, session_id=session_id, device_id=device_id
+                )
+                png_bytes = base64.b64decode(shot.base64_data)
+                with open(args.output, "wb") as f:
+                    f.write(png_bytes)
+                print(
+                    f"Screenshot saved to: {args.output} ({shot.width}x{shot.height})"
+                )
+
+            elif phone_action == "current-app":
+                app = xctest.get_current_app(wda_url=wda_url, session_id=session_id)
+                print(f"Current app: {app}")
+
+        except Exception as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+        return
+
+    # ------------------------------------------------------------------ #
+    # Android (ADB) / HarmonyOS (HDC) — use DeviceFactory                #
+    # ------------------------------------------------------------------ #
+    set_device_type(device_type)
+
+    if device_type == DeviceType.HDC:
+        from phone_agent.hdc import set_hdc_verbose
+
+        set_hdc_verbose(False)  # keep phone commands clean; user can set env var
+
+    factory = get_device_factory()
+
+    try:
+        if phone_action == "tap":
+            factory.tap(args.x, args.y, device_id=device_id, delay=args.delay)
+            print(f"Tapped ({args.x}, {args.y})")
+
+        elif phone_action == "double-tap":
+            factory.double_tap(args.x, args.y, device_id=device_id, delay=args.delay)
+            print(f"Double-tapped ({args.x}, {args.y})")
+
+        elif phone_action == "long-press":
+            factory.long_press(
+                args.x,
+                args.y,
+                duration_ms=args.duration_ms,
+                device_id=device_id,
+                delay=args.delay,
+            )
+            print(f"Long-pressed ({args.x}, {args.y}) for {args.duration_ms} ms")
+
+        elif phone_action == "swipe":
+            factory.swipe(
+                args.start_x,
+                args.start_y,
+                args.end_x,
+                args.end_y,
+                duration_ms=args.duration_ms,
+                device_id=device_id,
+                delay=args.delay,
+            )
+            print(
+                f"Swiped ({args.start_x}, {args.start_y}) -> ({args.end_x}, {args.end_y})"
+            )
+
+        elif phone_action == "type":
+            if device_type == DeviceType.ADB:
+                from phone_agent.adb.input import (
+                    detect_and_set_adb_keyboard,
+                    restore_keyboard,
+                    type_text,
+                )
+
+                original_ime = detect_and_set_adb_keyboard(device_id=device_id)
+                type_text(args.text, device_id=device_id)
+                if original_ime:
+                    restore_keyboard(original_ime, device_id=device_id)
+            else:
+                factory.type_text(args.text, device_id=device_id)
+            print(f"Typed: {args.text!r}")
+
+        elif phone_action == "clear":
+            factory.clear_text(device_id=device_id)
+            print("Cleared text")
+
+        elif phone_action == "back":
+            factory.back(device_id=device_id, delay=args.delay)
+            print("Pressed back")
+
+        elif phone_action == "home":
+            factory.home(device_id=device_id, delay=args.delay)
+            print("Went to home screen")
+
+        elif phone_action == "launch":
+            success = factory.launch_app(
+                args.app_name, device_id=device_id, delay=args.delay
+            )
+            if success:
+                print(f"Launched: {args.app_name}")
+            else:
+                print(f"Error: Could not launch app '{args.app_name}'")
+                dt = args.device_type
+                print(
+                    f"Run 'python main.py --device-type {dt} --list-apps' to see supported apps."
+                )
+                sys.exit(1)
+
+        elif phone_action == "screenshot":
+            shot = factory.get_screenshot(device_id=device_id)
+            png_bytes = base64.b64decode(shot.base64_data)
+            with open(args.output, "wb") as f:
+                f.write(png_bytes)
+            print(f"Screenshot saved to: {args.output} ({shot.width}x{shot.height})")
+
+        elif phone_action == "current-app":
+            app = factory.get_current_app(device_id=device_id)
+            print(f"Current app: {app}")
+
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+
 def main():
     """Main entry point."""
     args = parse_args()
+
+    # ------------------------------------------------------------------ #
+    # Phone mode — direct device control, no AI agent                    #
+    # ------------------------------------------------------------------ #
+    if getattr(args, "command", None) == "phone":
+        run_phone_command(args)
+        return
 
     # Set device type globally based on args
     if args.device_type == "adb":

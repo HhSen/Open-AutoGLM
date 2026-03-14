@@ -263,6 +263,49 @@ python main.py --list-apps
 python main.py --device-type hdc --list-apps
 ```
 
+### Direct Phone CLI (`phone-use`)
+
+If you mainly want direct device control without the AI agent, install the executable once from the repository root:
+
+```bash
+./install.sh
+```
+
+This installs `phone-use` globally by default. If `phone-use` is not found afterward, add:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+to your shell config (for example `~/.zshrc`).
+
+If you want a repo-local install instead, use:
+
+```bash
+./install.sh --local
+```
+
+Then use `phone-use` directly:
+
+```bash
+# Show all direct phone actions
+phone-use phone --help
+
+# Take a screenshot
+phone-use phone screenshot --output screen.png
+
+# Tap a coordinate
+phone-use phone tap 540 960
+
+# Launch an app
+phone-use phone launch Maps
+
+# iOS device
+phone-use --device-type ios phone current-app
+```
+
+For action descriptions and best practices, see `docs/phone-cli.md`.
+
 ### Python API
 
 ```python

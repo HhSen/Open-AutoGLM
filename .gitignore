@@ -26,6 +26,10 @@ ENV/
 env/
 .venv/
 
+# uv
+uv.lock
+.python-version
+
 # IDE
 .idea/
 .vscode/
@@ -61,3 +65,7 @@ app_package_name.py
 
 .claude/
 .venv
+
+
+# AI
+**/AGENTS.md
