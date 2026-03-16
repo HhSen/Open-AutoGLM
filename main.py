@@ -16,6 +16,7 @@ Environment Variables:
 
 import argparse
 import base64
+from datetime import datetime, timezone
 import json
 import os
 import shutil
@@ -34,6 +35,12 @@ from phone_agent.config.apps_harmonyos import list_supported_apps as list_harmon
 from phone_agent.config.apps_ios import list_supported_apps as list_ios_apps
 from phone_agent.device_factory import DeviceType, get_device_factory, set_device_type
 from phone_agent.model import ModelConfig
+from phone_agent.phone_mode_logging import (
+    MUTATING_PHONE_ACTIONS,
+    append_phone_action_log,
+    assess_state_change,
+    hash_screenshot_base64,
+)
 from phone_agent.xctest import XCTestConnection
 from phone_agent.xctest import list_devices as list_ios_devices
 
@@ -948,6 +955,46 @@ def run_phone_command(args: argparse.Namespace) -> None:
         print("Run 'python main.py phone --help' for available actions.")
         sys.exit(1)
 
+    action_log = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "command": "phone",
+        "action": phone_action,
+        "device_type": device_type.value,
+        "device_id": device_id,
+        "cwd": os.getcwd(),
+        "argv": sys.argv,
+        "status": "started",
+    }
+
+    def _capture_phone_state(get_current_app, get_screenshot) -> dict:
+        snapshot = {}
+        try:
+            snapshot["current_app"] = get_current_app()
+        except Exception as exc:
+            snapshot["current_app_error"] = str(exc)
+
+        try:
+            shot = get_screenshot()
+            snapshot["screen_width"] = shot.width
+            snapshot["screen_height"] = shot.height
+            snapshot["screenshot_sha256"] = hash_screenshot_base64(shot.base64_data)
+        except Exception as exc:
+            snapshot["screenshot_error"] = str(exc)
+
+        return snapshot
+
+    def _log_phone_action(**fields) -> str:
+        action_log.update(fields)
+        return str(append_phone_action_log(action_log))
+
+    def _record_no_change_note(log_path: str) -> None:
+        state_change = action_log.get("state_change", {})
+        if state_change.get("likely_no_visible_change"):
+            print(
+                "Note: command completed, but the current app and screenshot did not change. "
+                f"Check the log for details: {log_path}"
+            )
+
     # ------------------------------------------------------------------ #
     # iOS — delegate everything through xctest module + WDA session       #
     # ------------------------------------------------------------------ #
@@ -966,6 +1013,21 @@ def run_phone_command(args: argparse.Namespace) -> None:
             print("Error: Failed to create a WDA session.")
             sys.exit(1)
 
+        action_log["wda_url"] = wda_url
+        action_log["wda_session_id"] = session_id
+
+        before_state = None
+        if phone_action in MUTATING_PHONE_ACTIONS:
+            before_state = _capture_phone_state(
+                lambda: xctest.get_current_app(wda_url=wda_url, session_id=session_id),
+                lambda: xctest.get_screenshot(
+                    wda_url=wda_url,
+                    session_id=session_id,
+                    device_id=device_id,
+                ),
+            )
+            action_log["before"] = before_state
+
         try:
             if phone_action == "tap":
                 xctest.tap(
@@ -976,6 +1038,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                     delay=args.delay if args.delay is not None else 1.0,
                 )
                 print(f"Tapped ({args.x}, {args.y})")
+                action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
 
             elif phone_action == "double-tap":
                 xctest.double_tap(
@@ -986,6 +1049,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                     delay=args.delay if args.delay is not None else 1.0,
                 )
                 print(f"Double-tapped ({args.x}, {args.y})")
+                action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
 
             elif phone_action == "long-press":
                 xctest.long_press(
@@ -997,6 +1061,12 @@ def run_phone_command(args: argparse.Namespace) -> None:
                     delay=args.delay if args.delay is not None else 1.0,
                 )
                 print(f"Long-pressed ({args.x}, {args.y}) for {args.duration_ms} ms")
+                action_log["params"] = {
+                    "x": args.x,
+                    "y": args.y,
+                    "duration_ms": args.duration_ms,
+                    "delay": args.delay,
+                }
 
             elif phone_action == "swipe":
                 xctest.swipe(
@@ -1012,18 +1082,28 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 print(
                     f"Swiped ({args.start_x}, {args.start_y}) -> ({args.end_x}, {args.end_y})"
                 )
+                action_log["params"] = {
+                    "start_x": args.start_x,
+                    "start_y": args.start_y,
+                    "end_x": args.end_x,
+                    "end_y": args.end_y,
+                    "duration_ms": args.duration_ms,
+                    "delay": args.delay,
+                }
 
             elif phone_action == "type":
                 from phone_agent.xctest.input import type_text as xctest_type
 
                 xctest_type(args.text, wda_url=wda_url, session_id=session_id)
                 print(f"Typed: {args.text!r}")
+                action_log["params"] = {"text": args.text}
 
             elif phone_action == "clear":
                 from phone_agent.xctest.input import clear_text as xctest_clear
 
                 xctest_clear(wda_url=wda_url, session_id=session_id)
                 print("Cleared text")
+                action_log["params"] = {}
 
             elif phone_action == "back":
                 xctest.back(
@@ -1032,6 +1112,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                     delay=args.delay if args.delay is not None else 1.0,
                 )
                 print("Pressed back")
+                action_log["params"] = {"delay": args.delay}
 
             elif phone_action == "home":
                 xctest.home(
@@ -1040,6 +1121,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                     delay=args.delay if args.delay is not None else 1.0,
                 )
                 print("Went to home screen")
+                action_log["params"] = {"delay": args.delay}
 
             elif phone_action == "launch":
                 success = xctest.launch_app(
@@ -1050,12 +1132,15 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 )
                 if success:
                     print(f"Launched: {args.app_name}")
+                    action_log["params"] = {
+                        "app_name": args.app_name,
+                        "delay": args.delay,
+                    }
                 else:
-                    print(f"Error: Could not launch app '{args.app_name}'")
-                    print(
+                    raise ValueError(
+                        f"Could not launch app '{args.app_name}'. "
                         "Run 'python main.py --device-type ios --list-apps' to see supported apps."
                     )
-                    sys.exit(1)
 
             elif phone_action == "screenshot":
                 from phone_agent.xctest.screenshot import (
@@ -1071,10 +1156,18 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 print(
                     f"Screenshot saved to: {args.output} ({shot.width}x{shot.height})"
                 )
+                action_log["params"] = {"output": args.output}
+                action_log["result"] = {
+                    "output": os.path.abspath(args.output),
+                    "width": shot.width,
+                    "height": shot.height,
+                    "screenshot_sha256": hash_screenshot_base64(shot.base64_data),
+                }
 
             elif phone_action == "current-app":
                 app = xctest.get_current_app(wda_url=wda_url, session_id=session_id)
                 print(f"Current app: {app}")
+                action_log["result"] = {"current_app": app}
 
             elif phone_action == "state":
                 shot = xctest.get_screenshot(
@@ -1089,9 +1182,35 @@ def run_phone_command(args: argparse.Namespace) -> None:
                     screen_height=shot.height,
                 )
                 _print_or_save_state(state, args.output)
+                action_log["params"] = {"output": args.output}
+                action_log["result"] = {
+                    "node_count": state.get("node_count"),
+                    "output": os.path.abspath(args.output) if args.output else None,
+                }
+
+            if phone_action in MUTATING_PHONE_ACTIONS:
+                after_state = _capture_phone_state(
+                    lambda: xctest.get_current_app(
+                        wda_url=wda_url, session_id=session_id
+                    ),
+                    lambda: xctest.get_screenshot(
+                        wda_url=wda_url,
+                        session_id=session_id,
+                        device_id=device_id,
+                    ),
+                )
+                action_log["after"] = after_state
+                action_log["state_change"] = assess_state_change(
+                    before_state, after_state
+                )
+
+            log_path = _log_phone_action(status="success")
+            _record_no_change_note(log_path)
 
         except Exception as e:
+            log_path = _log_phone_action(status="error", error=str(e))
             print(f"Error: {e}")
+            print(f"Action log written to: {log_path}")
             sys.exit(1)
         return
 
@@ -1110,14 +1229,24 @@ def run_phone_command(args: argparse.Namespace) -> None:
 
     factory = get_device_factory()
 
+    before_state = None
+    if phone_action in MUTATING_PHONE_ACTIONS:
+        before_state = _capture_phone_state(
+            lambda: factory.get_current_app(device_id=device_id),
+            lambda: factory.get_screenshot(device_id=device_id),
+        )
+        action_log["before"] = before_state
+
     try:
         if phone_action == "tap":
             factory.tap(args.x, args.y, device_id=device_id, delay=args.delay)
             print(f"Tapped ({args.x}, {args.y})")
+            action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
 
         elif phone_action == "double-tap":
             factory.double_tap(args.x, args.y, device_id=device_id, delay=args.delay)
             print(f"Double-tapped ({args.x}, {args.y})")
+            action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
 
         elif phone_action == "long-press":
             factory.long_press(
@@ -1128,6 +1257,12 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 delay=args.delay,
             )
             print(f"Long-pressed ({args.x}, {args.y}) for {args.duration_ms} ms")
+            action_log["params"] = {
+                "x": args.x,
+                "y": args.y,
+                "duration_ms": args.duration_ms,
+                "delay": args.delay,
+            }
 
         elif phone_action == "swipe":
             factory.swipe(
@@ -1142,6 +1277,14 @@ def run_phone_command(args: argparse.Namespace) -> None:
             print(
                 f"Swiped ({args.start_x}, {args.start_y}) -> ({args.end_x}, {args.end_y})"
             )
+            action_log["params"] = {
+                "start_x": args.start_x,
+                "start_y": args.start_y,
+                "end_x": args.end_x,
+                "end_y": args.end_y,
+                "duration_ms": args.duration_ms,
+                "delay": args.delay,
+            }
 
         elif phone_action == "type":
             if device_type == DeviceType.ADB:
@@ -1158,18 +1301,22 @@ def run_phone_command(args: argparse.Namespace) -> None:
             else:
                 factory.type_text(args.text, device_id=device_id)
             print(f"Typed: {args.text!r}")
+            action_log["params"] = {"text": args.text}
 
         elif phone_action == "clear":
             factory.clear_text(device_id=device_id)
             print("Cleared text")
+            action_log["params"] = {}
 
         elif phone_action == "back":
             factory.back(device_id=device_id, delay=args.delay)
             print("Pressed back")
+            action_log["params"] = {"delay": args.delay}
 
         elif phone_action == "home":
             factory.home(device_id=device_id, delay=args.delay)
             print("Went to home screen")
+            action_log["params"] = {"delay": args.delay}
 
         elif phone_action == "launch":
             success = factory.launch_app(
@@ -1177,13 +1324,16 @@ def run_phone_command(args: argparse.Namespace) -> None:
             )
             if success:
                 print(f"Launched: {args.app_name}")
+                action_log["params"] = {
+                    "app_name": args.app_name,
+                    "delay": args.delay,
+                }
             else:
-                print(f"Error: Could not launch app '{args.app_name}'")
                 dt = args.device_type
-                print(
+                raise ValueError(
+                    f"Could not launch app '{args.app_name}'. "
                     f"Run 'python main.py --device-type {dt} --list-apps' to see supported apps."
                 )
-                sys.exit(1)
 
         elif phone_action == "screenshot":
             shot = factory.get_screenshot(device_id=device_id)
@@ -1191,10 +1341,18 @@ def run_phone_command(args: argparse.Namespace) -> None:
             with open(args.output, "wb") as f:
                 f.write(png_bytes)
             print(f"Screenshot saved to: {args.output} ({shot.width}x{shot.height})")
+            action_log["params"] = {"output": args.output}
+            action_log["result"] = {
+                "output": os.path.abspath(args.output),
+                "width": shot.width,
+                "height": shot.height,
+                "screenshot_sha256": hash_screenshot_base64(shot.base64_data),
+            }
 
         elif phone_action == "current-app":
             app = factory.get_current_app(device_id=device_id)
             print(f"Current app: {app}")
+            action_log["result"] = {"current_app": app}
 
         elif phone_action == "state":
             shot = factory.get_screenshot(device_id=device_id)
@@ -1204,9 +1362,27 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 screen_height=shot.height,
             )
             _print_or_save_state(state, args.output)
+            action_log["params"] = {"output": args.output}
+            action_log["result"] = {
+                "node_count": state.get("node_count"),
+                "output": os.path.abspath(args.output) if args.output else None,
+            }
+
+        if phone_action in MUTATING_PHONE_ACTIONS:
+            after_state = _capture_phone_state(
+                lambda: factory.get_current_app(device_id=device_id),
+                lambda: factory.get_screenshot(device_id=device_id),
+            )
+            action_log["after"] = after_state
+            action_log["state_change"] = assess_state_change(before_state, after_state)
+
+        log_path = _log_phone_action(status="success")
+        _record_no_change_note(log_path)
 
     except Exception as e:
+        log_path = _log_phone_action(status="error", error=str(e))
         print(f"Error: {e}")
+        print(f"Action log written to: {log_path}")
         sys.exit(1)
 
 

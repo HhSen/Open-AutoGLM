@@ -12,6 +12,22 @@ from phone_agent.config.apps import APP_PACKAGES, get_app_name
 from phone_agent.config.timing import TIMING_CONFIG
 
 
+def _run_adb_command(
+    adb_prefix: list[str], command: list[str], description: str
+) -> subprocess.CompletedProcess:
+    """Run an ADB command and raise if it fails."""
+    result = subprocess.run(
+        adb_prefix + command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    if result.returncode != 0:
+        output = (result.stderr or result.stdout or "").strip()
+        raise ValueError(output or f"ADB {description} failed")
+    return result
+
+
 def get_current_app(device_id: str | None = None) -> str:
     """
     Get the currently focused app name.
@@ -24,12 +40,7 @@ def get_current_app(device_id: str | None = None) -> str:
     """
     adb_prefix = _get_adb_prefix(device_id)
 
-    result = subprocess.run(
-        adb_prefix + ["shell", "dumpsys", "window"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
+    result = _run_adb_command(adb_prefix, ["shell", "dumpsys", "window"], "dumpsys")
     output = result.stdout
     if not output:
         raise ValueError("No output from dumpsys window")
@@ -54,23 +65,13 @@ def get_ui_tree(
     )
 
     try:
-        dump_result = subprocess.run(
-            adb_prefix + ["shell", "uiautomator", "dump", remote_path],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
+        _run_adb_command(
+            adb_prefix,
+            ["shell", "uiautomator", "dump", remote_path],
+            "uiautomator dump",
         )
-        if dump_result.returncode != 0:
-            raise ValueError(dump_result.stderr.strip() or "uiautomator dump failed")
 
-        pull_result = subprocess.run(
-            adb_prefix + ["pull", remote_path, local_path],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-        )
-        if pull_result.returncode != 0:
-            raise ValueError(pull_result.stderr.strip() or "adb pull failed")
+        _run_adb_command(adb_prefix, ["pull", remote_path, local_path], "pull UI tree")
 
         tree = ET.parse(local_path)
         root = tree.getroot()
@@ -214,9 +215,7 @@ def tap(
 
     adb_prefix = _get_adb_prefix(device_id)
 
-    subprocess.run(
-        adb_prefix + ["shell", "input", "tap", str(x), str(y)], capture_output=True
-    )
+    _run_adb_command(adb_prefix, ["shell", "input", "tap", str(x), str(y)], "tap")
     time.sleep(delay)
 
 
@@ -237,13 +236,9 @@ def double_tap(
 
     adb_prefix = _get_adb_prefix(device_id)
 
-    subprocess.run(
-        adb_prefix + ["shell", "input", "tap", str(x), str(y)], capture_output=True
-    )
+    _run_adb_command(adb_prefix, ["shell", "input", "tap", str(x), str(y)], "tap")
     time.sleep(TIMING_CONFIG.device.double_tap_interval)
-    subprocess.run(
-        adb_prefix + ["shell", "input", "tap", str(x), str(y)], capture_output=True
-    )
+    _run_adb_command(adb_prefix, ["shell", "input", "tap", str(x), str(y)], "tap")
     time.sleep(delay)
 
 
@@ -269,10 +264,10 @@ def long_press(
 
     adb_prefix = _get_adb_prefix(device_id)
 
-    subprocess.run(
-        adb_prefix
-        + ["shell", "input", "swipe", str(x), str(y), str(x), str(y), str(duration_ms)],
-        capture_output=True,
+    _run_adb_command(
+        adb_prefix,
+        ["shell", "input", "swipe", str(x), str(y), str(x), str(y), str(duration_ms)],
+        "long press",
     )
     time.sleep(delay)
 
@@ -309,9 +304,9 @@ def swipe(
         duration_ms = int(dist_sq / 1000)
         duration_ms = max(1000, min(duration_ms, 2000))  # Clamp between 1000-2000ms
 
-    subprocess.run(
-        adb_prefix
-        + [
+    _run_adb_command(
+        adb_prefix,
+        [
             "shell",
             "input",
             "swipe",
@@ -321,7 +316,7 @@ def swipe(
             str(end_y),
             str(duration_ms),
         ],
-        capture_output=True,
+        "swipe",
     )
     time.sleep(delay)
 
@@ -339,9 +334,7 @@ def back(device_id: str | None = None, delay: float | None = None) -> None:
 
     adb_prefix = _get_adb_prefix(device_id)
 
-    subprocess.run(
-        adb_prefix + ["shell", "input", "keyevent", "4"], capture_output=True
-    )
+    _run_adb_command(adb_prefix, ["shell", "input", "keyevent", "4"], "back")
     time.sleep(delay)
 
 
@@ -358,8 +351,10 @@ def home(device_id: str | None = None, delay: float | None = None) -> None:
 
     adb_prefix = _get_adb_prefix(device_id)
 
-    subprocess.run(
-        adb_prefix + ["shell", "input", "keyevent", "KEYCODE_HOME"], capture_output=True
+    _run_adb_command(
+        adb_prefix,
+        ["shell", "input", "keyevent", "KEYCODE_HOME"],
+        "home",
     )
     time.sleep(delay)
 
@@ -387,9 +382,9 @@ def launch_app(
     adb_prefix = _get_adb_prefix(device_id)
     package = APP_PACKAGES[app_name]
 
-    subprocess.run(
-        adb_prefix
-        + [
+    _run_adb_command(
+        adb_prefix,
+        [
             "shell",
             "monkey",
             "-p",
@@ -398,7 +393,7 @@ def launch_app(
             "android.intent.category.LAUNCHER",
             "1",
         ],
-        capture_output=True,
+        f"launch {app_name}",
     )
     time.sleep(delay)
     return True

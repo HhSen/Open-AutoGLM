@@ -9,6 +9,26 @@ from phone_agent.config.apps_ios import APP_PACKAGES_IOS as APP_PACKAGES, get_ap
 SCALE_FACTOR = 3  # 3 for most modern iPhone
 
 
+def _require_requests():
+    try:
+        import requests
+
+        return requests
+    except ImportError as exc:
+        raise ValueError(
+            "requests library required. Install: pip install requests"
+        ) from exc
+
+
+def _ensure_wda_response_ok(response, description: str) -> None:
+    try:
+        response.raise_for_status()
+    except Exception as exc:
+        body = getattr(response, "text", "")
+        detail = body.strip() if isinstance(body, str) else ""
+        raise ValueError(detail or f"WDA {description} failed") from exc
+
+
 def _get_wda_session_url(wda_url: str, session_id: str | None, endpoint: str) -> str:
     """
     Get the correct WDA URL for a session endpoint.
@@ -42,29 +62,19 @@ def get_current_app(
     Returns:
         The active bundle ID when available.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        # Get active app info from WDA using activeAppInfo endpoint
-        response = requests.get(
-            f"{wda_url.rstrip('/')}/wda/activeAppInfo", timeout=5, verify=False
-        )
+    response = requests.get(
+        f"{wda_url.rstrip('/')}/wda/activeAppInfo", timeout=5, verify=False
+    )
+    _ensure_wda_response_ok(response, "read current app")
+    data = response.json()
+    value = data.get("value", {})
+    bundle_id = value.get("bundleId", "")
+    if not bundle_id:
+        return "System Home"
 
-        if response.status_code == 200:
-            data = response.json()
-            value = data.get("value", {})
-            bundle_id = value.get("bundleId", "")
-            if not bundle_id:
-                return "System Home"
-
-            return get_app_name(bundle_id) or bundle_id
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error getting current app: {e}")
-
-    return "System Home"
+    return get_app_name(bundle_id) or bundle_id
 
 
 def get_ui_tree(
@@ -125,41 +135,35 @@ def tap(
         session_id: Optional WDA session ID.
         delay: Delay in seconds after tap.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = _get_wda_session_url(wda_url, session_id, "actions")
+    url = _get_wda_session_url(wda_url, session_id, "actions")
 
-        # W3C WebDriver Actions API for tap/click
-        actions = {
-            "actions": [
-                {
-                    "type": "pointer",
-                    "id": "finger1",
-                    "parameters": {"pointerType": "touch"},
-                    "actions": [
-                        {
-                            "type": "pointerMove",
-                            "duration": 0,
-                            "x": x / SCALE_FACTOR,
-                            "y": y / SCALE_FACTOR,
-                        },
-                        {"type": "pointerDown", "button": 0},
-                        {"type": "pause", "duration": 0.1},
-                        {"type": "pointerUp", "button": 0},
-                    ],
-                }
-            ]
-        }
+    # W3C WebDriver Actions API for tap/click
+    actions = {
+        "actions": [
+            {
+                "type": "pointer",
+                "id": "finger1",
+                "parameters": {"pointerType": "touch"},
+                "actions": [
+                    {
+                        "type": "pointerMove",
+                        "duration": 0,
+                        "x": x / SCALE_FACTOR,
+                        "y": y / SCALE_FACTOR,
+                    },
+                    {"type": "pointerDown", "button": 0},
+                    {"type": "pause", "duration": 0.1},
+                    {"type": "pointerUp", "button": 0},
+                ],
+            }
+        ]
+    }
 
-        requests.post(url, json=actions, timeout=15, verify=False)
-
-        time.sleep(delay)
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error tapping: {e}")
+    response = requests.post(url, json=actions, timeout=15, verify=False)
+    _ensure_wda_response_ok(response, "tap")
+    time.sleep(delay)
 
 
 def _extract_ios_ui_nodes(
@@ -302,45 +306,39 @@ def double_tap(
         session_id: Optional WDA session ID.
         delay: Delay in seconds after double tap.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = _get_wda_session_url(wda_url, session_id, "actions")
+    url = _get_wda_session_url(wda_url, session_id, "actions")
 
-        # W3C WebDriver Actions API for double tap
-        actions = {
-            "actions": [
-                {
-                    "type": "pointer",
-                    "id": "finger1",
-                    "parameters": {"pointerType": "touch"},
-                    "actions": [
-                        {
-                            "type": "pointerMove",
-                            "duration": 0,
-                            "x": x / SCALE_FACTOR,
-                            "y": y / SCALE_FACTOR,
-                        },
-                        {"type": "pointerDown", "button": 0},
-                        {"type": "pause", "duration": 100},
-                        {"type": "pointerUp", "button": 0},
-                        {"type": "pause", "duration": 100},
-                        {"type": "pointerDown", "button": 0},
-                        {"type": "pause", "duration": 100},
-                        {"type": "pointerUp", "button": 0},
-                    ],
-                }
-            ]
-        }
+    # W3C WebDriver Actions API for double tap
+    actions = {
+        "actions": [
+            {
+                "type": "pointer",
+                "id": "finger1",
+                "parameters": {"pointerType": "touch"},
+                "actions": [
+                    {
+                        "type": "pointerMove",
+                        "duration": 0,
+                        "x": x / SCALE_FACTOR,
+                        "y": y / SCALE_FACTOR,
+                    },
+                    {"type": "pointerDown", "button": 0},
+                    {"type": "pause", "duration": 100},
+                    {"type": "pointerUp", "button": 0},
+                    {"type": "pause", "duration": 100},
+                    {"type": "pointerDown", "button": 0},
+                    {"type": "pause", "duration": 100},
+                    {"type": "pointerUp", "button": 0},
+                ],
+            }
+        ]
+    }
 
-        requests.post(url, json=actions, timeout=10, verify=False)
-
-        time.sleep(delay)
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error double tapping: {e}")
+    response = requests.post(url, json=actions, timeout=10, verify=False)
+    _ensure_wda_response_ok(response, "double tap")
+    time.sleep(delay)
 
 
 def long_press(
@@ -362,44 +360,40 @@ def long_press(
         session_id: Optional WDA session ID.
         delay: Delay in seconds after long press.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = _get_wda_session_url(wda_url, session_id, "actions")
+    url = _get_wda_session_url(wda_url, session_id, "actions")
 
-        # W3C WebDriver Actions API for long press
-        # Convert duration to milliseconds
-        duration_ms = int(duration * 1000)
+    # W3C WebDriver Actions API for long press
+    # Convert duration to milliseconds
+    duration_ms = int(duration * 1000)
 
-        actions = {
-            "actions": [
-                {
-                    "type": "pointer",
-                    "id": "finger1",
-                    "parameters": {"pointerType": "touch"},
-                    "actions": [
-                        {
-                            "type": "pointerMove",
-                            "duration": 0,
-                            "x": x / SCALE_FACTOR,
-                            "y": y / SCALE_FACTOR,
-                        },
-                        {"type": "pointerDown", "button": 0},
-                        {"type": "pause", "duration": duration_ms},
-                        {"type": "pointerUp", "button": 0},
-                    ],
-                }
-            ]
-        }
+    actions = {
+        "actions": [
+            {
+                "type": "pointer",
+                "id": "finger1",
+                "parameters": {"pointerType": "touch"},
+                "actions": [
+                    {
+                        "type": "pointerMove",
+                        "duration": 0,
+                        "x": x / SCALE_FACTOR,
+                        "y": y / SCALE_FACTOR,
+                    },
+                    {"type": "pointerDown", "button": 0},
+                    {"type": "pause", "duration": duration_ms},
+                    {"type": "pointerUp", "button": 0},
+                ],
+            }
+        ]
+    }
 
-        requests.post(url, json=actions, timeout=int(duration + 10), verify=False)
-
-        time.sleep(delay)
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error long pressing: {e}")
+    response = requests.post(
+        url, json=actions, timeout=int(duration + 10), verify=False
+    )
+    _ensure_wda_response_ok(response, "long press")
+    time.sleep(delay)
 
 
 def swipe(
@@ -425,34 +419,30 @@ def swipe(
         session_id: Optional WDA session ID.
         delay: Delay in seconds after swipe.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        if duration is None:
-            # Calculate duration based on distance
-            dist_sq = (start_x - end_x) ** 2 + (start_y - end_y) ** 2
-            duration = dist_sq / 1000000  # Convert to seconds
-            duration = max(0.3, min(duration, 2.0))  # Clamp between 0.3-2 seconds
+    if duration is None:
+        # Calculate duration based on distance
+        dist_sq = (start_x - end_x) ** 2 + (start_y - end_y) ** 2
+        duration = dist_sq / 1000000  # Convert to seconds
+        duration = max(0.3, min(duration, 2.0))  # Clamp between 0.3-2 seconds
 
-        url = _get_wda_session_url(wda_url, session_id, "wda/dragfromtoforduration")
+    url = _get_wda_session_url(wda_url, session_id, "wda/dragfromtoforduration")
 
-        # WDA dragfromtoforduration API payload
-        payload = {
-            "fromX": start_x / SCALE_FACTOR,
-            "fromY": start_y / SCALE_FACTOR,
-            "toX": end_x / SCALE_FACTOR,
-            "toY": end_y / SCALE_FACTOR,
-            "duration": duration,
-        }
+    # WDA dragfromtoforduration API payload
+    payload = {
+        "fromX": start_x / SCALE_FACTOR,
+        "fromY": start_y / SCALE_FACTOR,
+        "toX": end_x / SCALE_FACTOR,
+        "toY": end_y / SCALE_FACTOR,
+        "duration": duration,
+    }
 
-        requests.post(url, json=payload, timeout=int(duration + 10), verify=False)
-
-        time.sleep(delay)
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error swiping: {e}")
+    response = requests.post(
+        url, json=payload, timeout=int(duration + 10), verify=False
+    )
+    _ensure_wda_response_ok(response, "swipe")
+    time.sleep(delay)
 
 
 def back(
@@ -472,28 +462,22 @@ def back(
         iOS doesn't have a universal back button. This simulates a back gesture
         by swiping from the left edge of the screen.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = _get_wda_session_url(wda_url, session_id, "wda/dragfromtoforduration")
+    url = _get_wda_session_url(wda_url, session_id, "wda/dragfromtoforduration")
 
-        # Swipe from left edge to simulate back gesture
-        payload = {
-            "fromX": 0,
-            "fromY": 640,
-            "toX": 400,
-            "toY": 640,
-            "duration": 0.3,
-        }
+    # Swipe from left edge to simulate back gesture
+    payload = {
+        "fromX": 0,
+        "fromY": 640,
+        "toX": 400,
+        "toY": 640,
+        "duration": 0.3,
+    }
 
-        requests.post(url, json=payload, timeout=10, verify=False)
-
-        time.sleep(delay)
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error performing back gesture: {e}")
+    response = requests.post(url, json=payload, timeout=10, verify=False)
+    _ensure_wda_response_ok(response, "back gesture")
+    time.sleep(delay)
 
 
 def home(
@@ -509,19 +493,13 @@ def home(
         session_id: Optional WDA session ID.
         delay: Delay in seconds after pressing home.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = f"{wda_url.rstrip('/')}/wda/homescreen"
+    url = f"{wda_url.rstrip('/')}/wda/homescreen"
 
-        requests.post(url, timeout=10, verify=False)
-
-        time.sleep(delay)
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error pressing home: {e}")
+    response = requests.post(url, timeout=10, verify=False)
+    _ensure_wda_response_ok(response, "home")
+    time.sleep(delay)
 
 
 def launch_app(
@@ -545,25 +523,17 @@ def launch_app(
     if app_name not in APP_PACKAGES:
         return False
 
-    try:
-        import requests
+    requests = _require_requests()
 
-        bundle_id = APP_PACKAGES[app_name]
-        url = _get_wda_session_url(wda_url, session_id, "wda/apps/launch")
+    bundle_id = APP_PACKAGES[app_name]
+    url = _get_wda_session_url(wda_url, session_id, "wda/apps/launch")
 
-        response = requests.post(
-            url, json={"bundleId": bundle_id}, timeout=10, verify=False
-        )
-
-        time.sleep(delay)
-        return response.status_code in (200, 201)
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-        return False
-    except Exception as e:
-        print(f"Error launching app: {e}")
-        return False
+    response = requests.post(
+        url, json={"bundleId": bundle_id}, timeout=10, verify=False
+    )
+    _ensure_wda_response_ok(response, f"launch {app_name}")
+    time.sleep(delay)
+    return True
 
 
 def get_screen_size(
@@ -579,27 +549,17 @@ def get_screen_size(
     Returns:
         Tuple of (width, height). Returns (375, 812) as default if unable to fetch.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = _get_wda_session_url(wda_url, session_id, "window/size")
+    url = _get_wda_session_url(wda_url, session_id, "window/size")
 
-        response = requests.get(url, timeout=5, verify=False)
-
-        if response.status_code == 200:
-            data = response.json()
-            value = data.get("value", {})
-            width = value.get("width", 375)
-            height = value.get("height", 812)
-            return width, height
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error getting screen size: {e}")
-
-    # Default iPhone screen size (iPhone X and later)
-    return 375, 812
+    response = requests.get(url, timeout=5, verify=False)
+    _ensure_wda_response_ok(response, "read screen size")
+    data = response.json()
+    value = data.get("value", {})
+    width = value.get("width", 375)
+    height = value.get("height", 812)
+    return width, height
 
 
 def press_button(
@@ -617,16 +577,10 @@ def press_button(
         session_id: Optional WDA session ID.
         delay: Delay in seconds after pressing.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = f"{wda_url.rstrip('/')}/wda/pressButton"
+    url = f"{wda_url.rstrip('/')}/wda/pressButton"
 
-        requests.post(url, json={"name": button_name}, timeout=10, verify=False)
-
-        time.sleep(delay)
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error pressing button: {e}")
+    response = requests.post(url, json={"name": button_name}, timeout=10, verify=False)
+    _ensure_wda_response_ok(response, f"press button {button_name}")
+    time.sleep(delay)

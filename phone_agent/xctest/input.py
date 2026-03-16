@@ -3,6 +3,26 @@
 import time
 
 
+def _require_requests():
+    try:
+        import requests
+
+        return requests
+    except ImportError as exc:
+        raise ValueError(
+            "requests library required. Install: pip install requests"
+        ) from exc
+
+
+def _ensure_wda_response_ok(response, description: str) -> None:
+    try:
+        response.raise_for_status()
+    except Exception as exc:
+        body = getattr(response, "text", "")
+        detail = body.strip() if isinstance(body, str) else ""
+        raise ValueError(detail or f"WDA {description} failed") from exc
+
+
 def _get_wda_session_url(wda_url: str, session_id: str | None, endpoint: str) -> str:
     """
     Get the correct WDA URL for a session endpoint.
@@ -42,23 +62,17 @@ def type_text(
         The input field must be focused before calling this function.
         Use tap() to focus on the input field first.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = _get_wda_session_url(wda_url, session_id, "wda/keys")
+    url = _get_wda_session_url(wda_url, session_id, "wda/keys")
 
-        # Send text to WDA
-        response = requests.post(
-            url, json={"value": list(text), "frequency": frequency}, timeout=30, verify=False
-        )
-
-        if response.status_code not in (200, 201):
-            print(f"Warning: Text input may have failed. Status: {response.status_code}")
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error typing text: {e}")
+    response = requests.post(
+        url,
+        json={"value": list(text), "frequency": frequency},
+        timeout=30,
+        verify=False,
+    )
+    _ensure_wda_response_ok(response, "text input")
 
 
 def clear_text(
@@ -76,31 +90,26 @@ def clear_text(
         This sends a clear command to the active element.
         The input field must be focused before calling this function.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        # First, try to get the active element
-        url = _get_wda_session_url(wda_url, session_id, "element/active")
+    url = _get_wda_session_url(wda_url, session_id, "element/active")
 
-        response = requests.get(url, timeout=10, verify=False)
+    response = requests.get(url, timeout=10, verify=False)
+    _ensure_wda_response_ok(response, "read active element")
+    data = response.json()
+    element_id = data.get("value", {}).get("ELEMENT") or data.get("value", {}).get(
+        "element-6066-11e4-a52e-4f735466cecf"
+    )
 
-        if response.status_code == 200:
-            data = response.json()
-            element_id = data.get("value", {}).get("ELEMENT") or data.get("value", {}).get("element-6066-11e4-a52e-4f735466cecf")
+    if element_id:
+        clear_url = _get_wda_session_url(
+            wda_url, session_id, f"element/{element_id}/clear"
+        )
+        clear_response = requests.post(clear_url, timeout=10, verify=False)
+        _ensure_wda_response_ok(clear_response, "clear active element")
+        return
 
-            if element_id:
-                # Clear the element
-                clear_url = _get_wda_session_url(wda_url, session_id, f"element/{element_id}/clear")
-                requests.post(clear_url, timeout=10, verify=False)
-                return
-
-        # Fallback: send backspace commands
-        _clear_with_backspace(wda_url, session_id)
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error clearing text: {e}")
+    _clear_with_backspace(wda_url, session_id)
 
 
 def _clear_with_backspace(
@@ -116,22 +125,18 @@ def _clear_with_backspace(
         session_id: Optional WDA session ID.
         max_backspaces: Maximum number of backspaces to send.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = _get_wda_session_url(wda_url, session_id, "wda/keys")
+    url = _get_wda_session_url(wda_url, session_id, "wda/keys")
 
-        # Send backspace character multiple times
-        backspace_char = "\u0008"  # Backspace Unicode character
-        requests.post(
-            url,
-            json={"value": [backspace_char] * max_backspaces},
-            timeout=10,
-            verify=False,
-        )
-
-    except Exception as e:
-        print(f"Error clearing with backspace: {e}")
+    backspace_char = "\u0008"
+    response = requests.post(
+        url,
+        json={"value": [backspace_char] * max_backspaces},
+        timeout=10,
+        verify=False,
+    )
+    _ensure_wda_response_ok(response, "clear with backspace")
 
 
 def send_keys(
@@ -151,17 +156,12 @@ def send_keys(
         >>> send_keys(["H", "e", "l", "l", "o"])
         >>> send_keys(["\n"])  # Send enter key
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = _get_wda_session_url(wda_url, session_id, "wda/keys")
+    url = _get_wda_session_url(wda_url, session_id, "wda/keys")
 
-        requests.post(url, json={"value": keys}, timeout=10, verify=False)
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error sending keys: {e}")
+    response = requests.post(url, json={"value": keys}, timeout=10, verify=False)
+    _ensure_wda_response_ok(response, "send keys")
 
 
 def press_enter(
@@ -192,17 +192,12 @@ def hide_keyboard(
         wda_url: WebDriverAgent URL.
         session_id: Optional WDA session ID.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = f"{wda_url.rstrip('/')}/wda/keyboard/dismiss"
+    url = f"{wda_url.rstrip('/')}/wda/keyboard/dismiss"
 
-        requests.post(url, timeout=10, verify=False)
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error hiding keyboard: {e}")
+    response = requests.post(url, timeout=10, verify=False)
+    _ensure_wda_response_ok(response, "hide keyboard")
 
 
 def is_keyboard_shown(
@@ -219,23 +214,14 @@ def is_keyboard_shown(
     Returns:
         True if keyboard is shown, False otherwise.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = _get_wda_session_url(wda_url, session_id, "wda/keyboard/shown")
+    url = _get_wda_session_url(wda_url, session_id, "wda/keyboard/shown")
 
-        response = requests.get(url, timeout=5, verify=False)
-
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("value", False)
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception:
-        pass
-
-    return False
+    response = requests.get(url, timeout=5, verify=False)
+    _ensure_wda_response_ok(response, "read keyboard visibility")
+    data = response.json()
+    return data.get("value", False)
 
 
 def set_pasteboard(
@@ -253,19 +239,17 @@ def set_pasteboard(
         This can be useful for inputting large amounts of text.
         After setting pasteboard, you can simulate paste gesture.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = f"{wda_url.rstrip('/')}/wda/setPasteboard"
+    url = f"{wda_url.rstrip('/')}/wda/setPasteboard"
 
-        requests.post(
-            url, json={"content": text, "contentType": "plaintext"}, timeout=10, verify=False
-        )
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error setting pasteboard: {e}")
+    response = requests.post(
+        url,
+        json={"content": text, "contentType": "plaintext"},
+        timeout=10,
+        verify=False,
+    )
+    _ensure_wda_response_ok(response, "set pasteboard")
 
 
 def get_pasteboard(
@@ -280,20 +264,11 @@ def get_pasteboard(
     Returns:
         Pasteboard content or None if failed.
     """
-    try:
-        import requests
+    requests = _require_requests()
 
-        url = f"{wda_url.rstrip('/')}/wda/getPasteboard"
+    url = f"{wda_url.rstrip('/')}/wda/getPasteboard"
 
-        response = requests.post(url, timeout=10, verify=False)
-
-        if response.status_code == 200:
-            data = response.json()
-            return data.get("value")
-
-    except ImportError:
-        print("Error: requests library required. Install: pip install requests")
-    except Exception as e:
-        print(f"Error getting pasteboard: {e}")
-
-    return None
+    response = requests.post(url, timeout=10, verify=False)
+    _ensure_wda_response_ok(response, "get pasteboard")
+    data = response.json()
+    return data.get("value")

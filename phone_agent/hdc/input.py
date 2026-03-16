@@ -7,6 +7,19 @@ from typing import Optional
 from phone_agent.hdc.connection import _run_hdc_command
 
 
+def _run_hdc_checked(
+    hdc_prefix: list[str], command: list[str], description: str, **kwargs
+) -> subprocess.CompletedProcess:
+    """Run an HDC command and raise if it fails."""
+    result = _run_hdc_command(hdc_prefix + command, **kwargs)
+    if result.returncode != 0:
+        output = (
+            getattr(result, "stderr", "") or getattr(result, "stdout", "") or ""
+        ).strip()
+        raise ValueError(output or f"HDC {description} failed")
+    return result
+
+
 def type_text(text: str, device_id: str | None = None) -> None:
     """
     Type text into the currently focused input field.
@@ -25,15 +38,17 @@ def type_text(text: str, device_id: str | None = None) -> None:
     hdc_prefix = _get_hdc_prefix(device_id)
 
     # Handle multi-line text by splitting on newlines
-    if '\n' in text:
-        lines = text.split('\n')
+    if "\n" in text:
+        lines = text.split("\n")
         for i, line in enumerate(lines):
             if line:  # Only process non-empty lines
                 # Escape special characters for shell
                 escaped_line = line.replace('"', '\\"').replace("$", "\\$")
 
-                _run_hdc_command(
-                    hdc_prefix + ["shell", "uitest", "uiInput", "text", escaped_line],
+                _run_hdc_checked(
+                    hdc_prefix,
+                    ["shell", "uitest", "uiInput", "text", escaped_line],
+                    "text input",
                     capture_output=True,
                     text=True,
                 )
@@ -41,8 +56,10 @@ def type_text(text: str, device_id: str | None = None) -> None:
             # Send ENTER key event after each line except the last one
             if i < len(lines) - 1:
                 try:
-                    _run_hdc_command(
-                        hdc_prefix + ["shell", "uitest", "uiInput", "keyEvent", "2054"],
+                    _run_hdc_checked(
+                        hdc_prefix,
+                        ["shell", "uitest", "uiInput", "keyEvent", "2054"],
+                        "press enter",
                         capture_output=True,
                         text=True,
                     )
@@ -56,8 +73,10 @@ def type_text(text: str, device_id: str | None = None) -> None:
 
         # HarmonyOS uitest uiInput text command
         # Format: hdc shell uitest uiInput text "文本内容"
-        _run_hdc_command(
-            hdc_prefix + ["shell", "uitest", "uiInput", "text", escaped_text],
+        _run_hdc_checked(
+            hdc_prefix,
+            ["shell", "uitest", "uiInput", "text", escaped_text],
+            "text input",
             capture_output=True,
             text=True,
         )
@@ -77,13 +96,17 @@ def clear_text(device_id: str | None = None) -> None:
     hdc_prefix = _get_hdc_prefix(device_id)
     # Ctrl+A to select all (key code 2072 for Ctrl, 2017 for A)
     # Then delete
-    _run_hdc_command(
-        hdc_prefix + ["shell", "uitest", "uiInput", "keyEvent", "2072", "2017"],
+    _run_hdc_checked(
+        hdc_prefix,
+        ["shell", "uitest", "uiInput", "keyEvent", "2072", "2017"],
+        "select all",
         capture_output=True,
         text=True,
     )
-    _run_hdc_command(
-        hdc_prefix + ["shell", "uitest", "uiInput", "keyEvent", "2055"],  # Delete key
+    _run_hdc_checked(
+        hdc_prefix,
+        ["shell", "uitest", "uiInput", "keyEvent", "2055"],
+        "delete selection",
         capture_output=True,
         text=True,
     )
@@ -107,8 +130,10 @@ def detect_and_set_adb_keyboard(device_id: str | None = None) -> str:
 
     # Get current IME (if HarmonyOS supports this)
     try:
-        result = _run_hdc_command(
-            hdc_prefix + ["shell", "settings", "get", "secure", "default_input_method"],
+        result = _run_hdc_checked(
+            hdc_prefix,
+            ["shell", "settings", "get", "secure", "default_input_method"],
+            "read default input method",
             capture_output=True,
             text=True,
         )
@@ -135,8 +160,12 @@ def restore_keyboard(ime: str, device_id: str | None = None) -> None:
     hdc_prefix = _get_hdc_prefix(device_id)
 
     try:
-        _run_hdc_command(
-            hdc_prefix + ["shell", "ime", "set", ime], capture_output=True, text=True
+        _run_hdc_checked(
+            hdc_prefix,
+            ["shell", "ime", "set", ime],
+            "restore keyboard",
+            capture_output=True,
+            text=True,
         )
     except Exception:
         pass

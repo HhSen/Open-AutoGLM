@@ -11,6 +11,19 @@ from phone_agent.config.timing import TIMING_CONFIG
 from phone_agent.hdc.connection import _run_hdc_command
 
 
+def _run_hdc_checked(
+    hdc_prefix: list[str], command: list[str], description: str, **kwargs
+) -> subprocess.CompletedProcess:
+    """Run an HDC command and raise if it fails."""
+    result = _run_hdc_command(hdc_prefix + command, **kwargs)
+    if result.returncode != 0:
+        output = (
+            getattr(result, "stderr", "") or getattr(result, "stdout", "") or ""
+        ).strip()
+        raise ValueError(output or f"HDC {description} failed")
+    return result
+
+
 def get_current_app(device_id: str | None = None) -> str:
     """
     Get the currently focused app bundle name.
@@ -24,8 +37,10 @@ def get_current_app(device_id: str | None = None) -> str:
     hdc_prefix = _get_hdc_prefix(device_id)
 
     # Use 'aa dump -l' to list running abilities
-    result = _run_hdc_command(
-        hdc_prefix + ["shell", "aa", "dump", "-l"],
+    result = _run_hdc_checked(
+        hdc_prefix,
+        ["shell", "aa", "dump", "-l"],
+        "read current app",
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -90,8 +105,10 @@ def tap(
     hdc_prefix = _get_hdc_prefix(device_id)
 
     # HarmonyOS uses uitest uiInput click
-    _run_hdc_command(
-        hdc_prefix + ["shell", "uitest", "uiInput", "click", str(x), str(y)],
+    _run_hdc_checked(
+        hdc_prefix,
+        ["shell", "uitest", "uiInput", "click", str(x), str(y)],
+        "tap",
         capture_output=True,
     )
     time.sleep(delay)
@@ -115,8 +132,10 @@ def double_tap(
     hdc_prefix = _get_hdc_prefix(device_id)
 
     # HarmonyOS uses uitest uiInput doubleClick
-    _run_hdc_command(
-        hdc_prefix + ["shell", "uitest", "uiInput", "doubleClick", str(x), str(y)],
+    _run_hdc_checked(
+        hdc_prefix,
+        ["shell", "uitest", "uiInput", "doubleClick", str(x), str(y)],
+        "double tap",
         capture_output=True,
     )
     time.sleep(delay)
@@ -146,8 +165,10 @@ def long_press(
 
     # HarmonyOS uses uitest uiInput longClick
     # Note: longClick may have a fixed duration, duration_ms parameter might not be supported
-    _run_hdc_command(
-        hdc_prefix + ["shell", "uitest", "uiInput", "longClick", str(x), str(y)],
+    _run_hdc_checked(
+        hdc_prefix,
+        ["shell", "uitest", "uiInput", "longClick", str(x), str(y)],
+        "long press",
         capture_output=True,
     )
     time.sleep(delay)
@@ -187,9 +208,9 @@ def swipe(
 
     # HarmonyOS uses uitest uiInput swipe
     # Format: swipe startX startY endX endY duration
-    _run_hdc_command(
-        hdc_prefix
-        + [
+    _run_hdc_checked(
+        hdc_prefix,
+        [
             "shell",
             "uitest",
             "uiInput",
@@ -200,6 +221,7 @@ def swipe(
             str(end_y),
             str(duration_ms),
         ],
+        "swipe",
         capture_output=True,
     )
     time.sleep(delay)
@@ -219,8 +241,10 @@ def back(device_id: str | None = None, delay: float | None = None) -> None:
     hdc_prefix = _get_hdc_prefix(device_id)
 
     # HarmonyOS uses uitest uiInput keyEvent Back
-    _run_hdc_command(
-        hdc_prefix + ["shell", "uitest", "uiInput", "keyEvent", "Back"],
+    _run_hdc_checked(
+        hdc_prefix,
+        ["shell", "uitest", "uiInput", "keyEvent", "Back"],
+        "back",
         capture_output=True,
     )
     time.sleep(delay)
@@ -240,8 +264,10 @@ def home(device_id: str | None = None, delay: float | None = None) -> None:
     hdc_prefix = _get_hdc_prefix(device_id)
 
     # HarmonyOS uses uitest uiInput keyEvent Home
-    _run_hdc_command(
-        hdc_prefix + ["shell", "uitest", "uiInput", "keyEvent", "Home"],
+    _run_hdc_checked(
+        hdc_prefix,
+        ["shell", "uitest", "uiInput", "keyEvent", "Home"],
+        "home",
         capture_output=True,
     )
     time.sleep(delay)
@@ -278,9 +304,9 @@ def launch_app(
 
     # HarmonyOS uses 'aa start' command to launch apps
     # Format: aa start -b {bundle} -a {ability}
-    _run_hdc_command(
-        hdc_prefix
-        + [
+    _run_hdc_checked(
+        hdc_prefix,
+        [
             "shell",
             "aa",
             "start",
@@ -289,6 +315,7 @@ def launch_app(
             "-a",
             ability,
         ],
+        f"launch {app_name}",
         capture_output=True,
     )
     time.sleep(delay)
