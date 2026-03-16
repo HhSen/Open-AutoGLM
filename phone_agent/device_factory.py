@@ -1,7 +1,6 @@
 """Device factory for selecting ADB or HDC based on device type."""
 
 from enum import Enum
-from typing import Any
 
 
 class DeviceType(Enum):
@@ -52,6 +51,19 @@ class DeviceFactory:
     def get_current_app(self, device_id: str | None = None) -> str:
         """Get current app name."""
         return self.module.get_current_app(device_id)
+
+    def get_ui_tree(
+        self,
+        device_id: str | None = None,
+        screen_width: int | None = None,
+        screen_height: int | None = None,
+    ):
+        """Get the native UI tree for the current screen."""
+        if not hasattr(self.module, "get_ui_tree"):
+            raise NotImplementedError(
+                f"UI tree is not supported for device type: {self.device_type.value}"
+            )
+        return self.module.get_ui_tree(device_id, screen_width, screen_height)
 
     def tap(
         self, x: int, y: int, device_id: str | None = None, delay: float | None = None

@@ -63,6 +63,12 @@ Your output should STRICTLY follow the format:
   <answer>
   do(action="Back")
   </answer>
+- **Get_UI_Tree**
+  Request the native accessibility/UI tree when the screenshot is ambiguous or you need exact component bounds. This is supported on `device_type` `adb` and `ios`. The next screen info may include a `ui_tree` field with component positions and relative tap centers.
+  **Example**:
+  <answer>
+  do(action="Get_UI_Tree")
+  </answer>
 - **Finish**
   Terminate the program and optionally print a message.
   **Example**:
@@ -75,5 +81,6 @@ REMEMBER:
 - Think before you act: Always analyze the current UI and the best course of action before executing any step, and output in <think> part.
 - Only ONE LINE of action in <answer> part per response: Each step must contain exactly one line of executable code.
 - Generate execution code strictly according to format requirements.
+- Use `Get_UI_Tree` before tapping when the screenshot alone is not enough to locate the exact target component, but only when `device_type` is `adb` or `ios`.
 """
 )

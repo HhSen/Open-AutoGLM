@@ -3,8 +3,10 @@
 import os
 import re
 import subprocess
+import tempfile
 import time
-from typing import List, Optional, Tuple
+import uuid
+import xml.etree.ElementTree as ET
 
 from phone_agent.config.apps import APP_PACKAGES, get_app_name
 from phone_agent.config.timing import TIMING_CONFIG
@@ -39,6 +41,55 @@ def get_current_app(device_id: str | None = None) -> str:
     return get_app_name(package_name) or package_name
 
 
+def get_ui_tree(
+    device_id: str | None = None,
+    screen_width: int | None = None,
+    screen_height: int | None = None,
+) -> dict:
+    """Dump the Android UI hierarchy and normalize visible node positions."""
+    adb_prefix = _get_adb_prefix(device_id)
+    remote_path = f"/sdcard/window_dump_{uuid.uuid4().hex}.xml"
+    local_path = os.path.join(
+        tempfile.gettempdir(), f"window_dump_{uuid.uuid4().hex}.xml"
+    )
+
+    try:
+        dump_result = subprocess.run(
+            adb_prefix + ["shell", "uiautomator", "dump", remote_path],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        if dump_result.returncode != 0:
+            raise ValueError(dump_result.stderr.strip() or "uiautomator dump failed")
+
+        pull_result = subprocess.run(
+            adb_prefix + ["pull", remote_path, local_path],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        if pull_result.returncode != 0:
+            raise ValueError(pull_result.stderr.strip() or "adb pull failed")
+
+        tree = ET.parse(local_path)
+        root = tree.getroot()
+        nodes = _extract_android_ui_nodes(root, screen_width, screen_height)
+        return {
+            "source": "adb_uiautomator",
+            "node_count": len(nodes),
+            "nodes": nodes,
+        }
+    finally:
+        subprocess.run(
+            adb_prefix + ["shell", "rm", remote_path],
+            capture_output=True,
+            text=True,
+        )
+        if os.path.exists(local_path):
+            os.remove(local_path)
+
+
 def _extract_focused_package(output: str) -> str | None:
     """Extract the currently focused package from dumpsys window output."""
     focus_markers = ("mFocusedApp", "mCurrentFocus")
@@ -66,6 +117,84 @@ def _extract_package_name(line: str) -> str | None:
         return match.group(1)
 
     return None
+
+
+def _extract_android_ui_nodes(
+    root: ET.Element,
+    screen_width: int | None = None,
+    screen_height: int | None = None,
+) -> list[dict]:
+    """Flatten visible Android UI nodes and attach normalized bounds."""
+    nodes: list[dict] = []
+    for index, node in enumerate(root.iter("node")):
+        bounds = _parse_android_bounds(node.attrib.get("bounds", ""))
+        if bounds is None:
+            continue
+
+        normalized = _normalize_bounds(bounds, screen_width, screen_height)
+        entry = {
+            "index": index,
+            "class_name": node.attrib.get("class", ""),
+            "resource_id": node.attrib.get("resource-id", ""),
+            "text": node.attrib.get("text", ""),
+            "content_desc": node.attrib.get("content-desc", ""),
+            "package": node.attrib.get("package", ""),
+            "clickable": node.attrib.get("clickable") == "true",
+            "enabled": node.attrib.get("enabled") == "true",
+            "focused": node.attrib.get("focused") == "true",
+            "selected": node.attrib.get("selected") == "true",
+            **normalized,
+        }
+        if _should_keep_android_node(entry):
+            nodes.append(entry)
+    return nodes
+
+
+def _parse_android_bounds(bounds: str) -> tuple[int, int, int, int] | None:
+    """Parse Android uiautomator bounds strings like [0,1][2,3]."""
+    match = re.match(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
+    if not match:
+        return None
+    left, top, right, bottom = match.groups()
+    return int(left), int(top), int(right), int(bottom)
+
+
+def _normalize_bounds(
+    bounds: tuple[int, int, int, int],
+    screen_width: int | None,
+    screen_height: int | None,
+) -> dict:
+    """Convert absolute bounds into a reusable payload with centers."""
+    left, top, right, bottom = bounds
+    center_x = int((left + right) / 2)
+    center_y = int((top + bottom) / 2)
+    result = {
+        "bounds_px": [left, top, right, bottom],
+        "center_px": [center_x, center_y],
+    }
+
+    if screen_width and screen_height:
+        result["bounds_rel"] = [
+            int(left / screen_width * 1000),
+            int(top / screen_height * 1000),
+            int(right / screen_width * 1000),
+            int(bottom / screen_height * 1000),
+        ]
+        result["center_rel"] = [
+            int(center_x / screen_width * 1000),
+            int(center_y / screen_height * 1000),
+        ]
+
+    return result
+
+
+def _should_keep_android_node(node: dict) -> bool:
+    """Keep visible Android nodes that carry text, ids, or can be interacted with."""
+    left, top, right, bottom = node["bounds_px"]
+    has_area = right > left and bottom > top
+    has_identity = any([node["text"], node["content_desc"], node["resource_id"]])
+    is_interactive = any([node["clickable"], node["focused"], node["selected"]])
+    return has_area and (has_identity or is_interactive)
 
 
 def tap(

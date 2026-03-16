@@ -8,12 +8,14 @@ from phone_agent.xctest import (
     back,
     double_tap,
     home,
+    get_ui_tree,
     launch_app,
     long_press,
     swipe,
     tap,
 )
 from phone_agent.xctest.input import clear_text, hide_keyboard, type_text
+from phone_agent.actions.handler import summarize_ui_tree_for_model
 
 
 @dataclass
@@ -24,6 +26,7 @@ class ActionResult:
     should_finish: bool
     message: str | None = None
     requires_confirmation: bool = False
+    context_data: dict[str, Any] | None = None
 
 
 class IOSActionHandler:
@@ -79,6 +82,8 @@ class IOSActionHandler:
             )
 
         action_name = action.get("action")
+        if not isinstance(action_name, str):
+            return ActionResult(False, False, "Missing action name")
         handler_method = self._get_handler(action_name)
 
         if handler_method is None:
@@ -112,6 +117,7 @@ class IOSActionHandler:
             "Note": self._handle_note,
             "Call_API": self._handle_call_api,
             "Interact": self._handle_interact,
+            "Get_UI_Tree": self._handle_get_ui_tree,
         }
         return handlers.get(action_name)
 
@@ -129,9 +135,7 @@ class IOSActionHandler:
         if not app_name:
             return ActionResult(False, False, "No app name specified")
 
-        success = launch_app(
-            app_name, wda_url=self.wda_url, session_id=self.session_id
-        )
+        success = launch_app(app_name, wda_url=self.wda_url, session_id=self.session_id)
         if success:
             return ActionResult(True, False)
         return ActionResult(False, False, f"App not found: {app_name}")
@@ -267,6 +271,23 @@ class IOSActionHandler:
         """Handle interaction request (user choice needed)."""
         # This action signals that user input is needed
         return ActionResult(True, False, message="User interaction required")
+
+    def _handle_get_ui_tree(
+        self, action: dict, width: int, height: int
+    ) -> ActionResult:
+        """Fetch the native iOS accessibility tree for the current screen."""
+        ui_tree = get_ui_tree(
+            wda_url=self.wda_url,
+            session_id=self.session_id,
+            screen_width=width,
+            screen_height=height,
+        )
+        return ActionResult(
+            True,
+            False,
+            message="UI tree captured",
+            context_data={"ui_tree": summarize_ui_tree_for_model(ui_tree)},
+        )
 
     @staticmethod
     def _default_confirmation(message: str) -> bool:

@@ -45,3 +45,17 @@ def test_parse_phone_args_with_device_flags_mixed_positions(monkeypatch):
     assert args.device_type == "adb"
     assert args.device_id == "emulator-5554"
     assert args.wda_url == "http://localhost:8100"
+
+
+def test_parse_phone_state_args(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["phone-use", "phone", "state", "--output", "state.json"],
+    )
+
+    args = main.parse_args()
+
+    assert args.command == "phone"
+    assert args.phone_action == "state"
+    assert args.output == "state.json"

@@ -16,6 +16,7 @@ Environment Variables:
 
 import argparse
 import base64
+import json
 import os
 import shutil
 import subprocess
@@ -25,6 +26,7 @@ from urllib.parse import urlparse
 from openai import OpenAI
 
 from phone_agent import PhoneAgent
+from phone_agent.actions.handler import summarize_ui_tree_for_model
 from phone_agent.agent import AgentConfig
 from phone_agent.agent_ios import IOSAgentConfig, IOSPhoneAgent
 from phone_agent.config.apps import list_supported_apps
@@ -585,6 +587,7 @@ Examples:
     phone-use phone home
     phone-use phone launch WeChat
     phone-use phone screenshot --output screen.png
+    phone-use phone state --output state.json
     phone-use phone current-app
     phone-use --device-type hdc phone tap 500 1000
     phone-use --device-type ios phone tap 200 400
@@ -716,6 +719,19 @@ Examples:
 
     # --- current-app ---
     action_parsers.add_parser("current-app", help="Print the currently active app")
+
+    # --- state ---
+    p = action_parsers.add_parser(
+        "state", help="Dump the current phone state with native UI coordinates"
+    )
+    p.add_argument(
+        "--output",
+        "-o",
+        type=str,
+        default=None,
+        metavar="PATH",
+        help="Optional output file path for the full state JSON",
+    )
 
     return parser
 
@@ -1060,6 +1076,20 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 app = xctest.get_current_app(wda_url=wda_url, session_id=session_id)
                 print(f"Current app: {app}")
 
+            elif phone_action == "state":
+                shot = xctest.get_screenshot(
+                    wda_url=wda_url,
+                    session_id=session_id,
+                    device_id=device_id,
+                )
+                state = xctest.get_ui_tree(
+                    wda_url=wda_url,
+                    session_id=session_id,
+                    screen_width=shot.width,
+                    screen_height=shot.height,
+                )
+                _print_or_save_state(state, args.output)
+
         except Exception as e:
             print(f"Error: {e}")
             sys.exit(1)
@@ -1074,6 +1104,9 @@ def run_phone_command(args: argparse.Namespace) -> None:
         from phone_agent.hdc import set_hdc_verbose
 
         set_hdc_verbose(False)  # keep phone commands clean; user can set env var
+        if phone_action == "state":
+            print("Error: state is currently supported on adb and ios, not hdc.")
+            sys.exit(1)
 
     factory = get_device_factory()
 
@@ -1163,9 +1196,32 @@ def run_phone_command(args: argparse.Namespace) -> None:
             app = factory.get_current_app(device_id=device_id)
             print(f"Current app: {app}")
 
+        elif phone_action == "state":
+            shot = factory.get_screenshot(device_id=device_id)
+            state = factory.get_ui_tree(
+                device_id=device_id,
+                screen_width=shot.width,
+                screen_height=shot.height,
+            )
+            _print_or_save_state(state, args.output)
+
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
+
+
+def _print_or_save_state(state: dict, output_path: str | None) -> None:
+    """Print the summarized phone state and optionally save the full payload."""
+    summarized_state = summarize_ui_tree_for_model(state)
+    payload = json.dumps(summarized_state, ensure_ascii=False, indent=2)
+
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as file_obj:
+            file_obj.write(json.dumps(state, ensure_ascii=False, indent=2))
+            file_obj.write("\n")
+        print(f"Full state saved to: {output_path}")
+
+    print(payload)
 
 
 def main():

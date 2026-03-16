@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from phone_agent.config.timing import TIMING_CONFIG
-from phone_agent.device_factory import get_device_factory
+from phone_agent.device_factory import DeviceType, get_device_factory
 
 
 @dataclass
@@ -19,6 +19,7 @@ class ActionResult:
     should_finish: bool
     message: str | None = None
     requires_confirmation: bool = False
+    context_data: dict[str, Any] | None = None
 
 
 class ActionHandler:
@@ -71,6 +72,8 @@ class ActionHandler:
             )
 
         action_name = action.get("action")
+        if not isinstance(action_name, str):
+            return ActionResult(False, False, "Missing action name")
         handler_method = self._get_handler(action_name)
 
         if handler_method is None:
@@ -104,6 +107,7 @@ class ActionHandler:
             "Note": self._handle_note,
             "Call_API": self._handle_call_api,
             "Interact": self._handle_interact,
+            "Get_UI_Tree": self._handle_get_ui_tree,
         }
         return handlers.get(action_name)
 
@@ -255,6 +259,29 @@ class ActionHandler:
         # This action signals that user input is needed
         return ActionResult(True, False, message="User interaction required")
 
+    def _handle_get_ui_tree(
+        self, action: dict, width: int, height: int
+    ) -> ActionResult:
+        """Fetch the native UI tree for the current screen."""
+        device_factory = get_device_factory()
+        if device_factory.device_type == DeviceType.HDC:
+            return ActionResult(
+                False,
+                False,
+                "UI tree lookup is currently supported on ADB and iOS, not HDC.",
+            )
+        ui_tree = device_factory.get_ui_tree(
+            device_id=self.device_id,
+            screen_width=width,
+            screen_height=height,
+        )
+        return ActionResult(
+            True,
+            False,
+            message="UI tree captured",
+            context_data={"ui_tree": summarize_ui_tree_for_model(ui_tree)},
+        )
+
     def _send_keyevent(self, keycode: str) -> None:
         """Send a keyevent to the device."""
         from phone_agent.device_factory import DeviceType, get_device_factory
@@ -265,7 +292,7 @@ class ActionHandler:
         # Handle HDC devices with HarmonyOS-specific keyEvent command
         if device_factory.device_type == DeviceType.HDC:
             hdc_prefix = ["hdc", "-t", self.device_id] if self.device_id else ["hdc"]
-            
+
             # Map common keycodes to HarmonyOS keyEvent codes
             # KEYCODE_ENTER (66) -> 2054 (HarmonyOS Enter key code)
             if keycode == "KEYCODE_ENTER" or keycode == "66":
@@ -283,7 +310,8 @@ class ActionHandler:
                         # For now, only handle ENTER, other keys may need mapping
                         if "ENTER" in keycode:
                             _run_hdc_command(
-                                hdc_prefix + ["shell", "uitest", "uiInput", "keyEvent", "2054"],
+                                hdc_prefix
+                                + ["shell", "uitest", "uiInput", "keyEvent", "2054"],
                                 capture_output=True,
                                 text=True,
                             )
@@ -297,7 +325,8 @@ class ActionHandler:
                     else:
                         # Assume it's a numeric code
                         _run_hdc_command(
-                            hdc_prefix + ["shell", "uitest", "uiInput", "keyEvent", str(keycode)],
+                            hdc_prefix
+                            + ["shell", "uitest", "uiInput", "keyEvent", str(keycode)],
                             capture_output=True,
                             text=True,
                         )
@@ -355,9 +384,9 @@ def parse_action(response: str) -> dict[str, Any]:
             # Use AST parsing instead of eval for safety
             try:
                 # Escape special characters (newlines, tabs, etc.) for valid Python syntax
-                response = response.replace('\n', '\\n')
-                response = response.replace('\r', '\\r')
-                response = response.replace('\t', '\\t')
+                response = response.replace("\n", "\\n")
+                response = response.replace("\r", "\\r")
+                response = response.replace("\t", "\\t")
 
                 tree = ast.parse(response, mode="eval")
                 if not isinstance(tree.body, ast.Call):
@@ -368,6 +397,10 @@ def parse_action(response: str) -> dict[str, Any]:
                 action = {"_metadata": "do"}
                 for keyword in call.keywords:
                     key = keyword.arg
+                    if key is None:
+                        raise ValueError(
+                            "Unexpected positional argument in do() action"
+                        )
                     value = ast.literal_eval(keyword.value)
                     action[key] = value
 
@@ -397,3 +430,60 @@ def finish(**kwargs) -> dict[str, Any]:
     """Helper function for creating 'finish' actions."""
     kwargs["_metadata"] = "finish"
     return kwargs
+
+
+def summarize_ui_tree_for_model(
+    ui_tree: dict[str, Any], max_nodes: int = 120
+) -> dict[str, Any]:
+    """Trim large UI-tree payloads before sending them back to the model."""
+    nodes = ui_tree.get("nodes", [])
+    if not isinstance(nodes, list):
+        return ui_tree
+
+    ranked_nodes = [
+        (_score_ui_tree_node(node), index, node) for index, node in enumerate(nodes)
+    ]
+    ranked_nodes.sort(key=lambda item: (-item[0], item[1]))
+    selected = ranked_nodes[:max_nodes]
+    selected.sort(key=lambda item: item[1])
+
+    summary = dict(ui_tree)
+    summary["nodes"] = [item[2] for item in selected]
+    summary["node_count"] = len(nodes)
+    summary["truncated"] = len(nodes) > max_nodes
+    return summary
+
+
+def _score_ui_tree_node(node: dict[str, Any]) -> int:
+    """Prioritize actionable and labeled nodes when trimming UI trees."""
+    text_fields = [
+        str(node.get("text", "")),
+        str(node.get("content_desc", "")),
+        str(node.get("resource_id", "")),
+        str(node.get("name", "")),
+        str(node.get("label", "")),
+        str(node.get("value", "")),
+    ]
+    score = sum(2 for value in text_fields if value)
+
+    for key in ("clickable", "focused", "selected", "accessible"):
+        if bool(node.get(key)):
+            score += 4
+
+    type_name = str(node.get("type", ""))
+    for marker in (
+        "Button",
+        "Cell",
+        "Field",
+        "Image",
+        "Link",
+        "Slider",
+        "StaticText",
+        "Switch",
+        "TextField",
+    ):
+        if marker in type_name:
+            score += 3
+            break
+
+    return score

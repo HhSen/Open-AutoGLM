@@ -98,6 +98,7 @@ class IOSPhoneAgent:
 
         self._context: list[dict[str, Any]] = []
         self._step_count = 0
+        self._pending_screen_info: dict[str, Any] = {}
 
     def run(self, task: str) -> str:
         """
@@ -111,6 +112,7 @@ class IOSPhoneAgent:
         """
         self._context = []
         self._step_count = 0
+        self._pending_screen_info = {}
 
         # First step with user prompt
         result = self._execute_step(task, is_first=True)
@@ -150,6 +152,7 @@ class IOSPhoneAgent:
         """Reset the agent state for a new task."""
         self._context = []
         self._step_count = 0
+        self._pending_screen_info = {}
 
     def _execute_step(
         self, user_prompt: str | None = None, is_first: bool = False
@@ -169,11 +172,12 @@ class IOSPhoneAgent:
 
         # Build messages
         if is_first:
-            self._context.append(
-                MessageBuilder.create_system_message(self.agent_config.system_prompt)
-            )
+            system_prompt = self.agent_config.system_prompt or ""
+            self._context.append(MessageBuilder.create_system_message(system_prompt))
 
-            screen_info = MessageBuilder.build_screen_info(current_app)
+            screen_info = MessageBuilder.build_screen_info(
+                current_app, device_type="ios", **self._pending_screen_info
+            )
             text_content = f"{user_prompt}\n\n{screen_info}"
 
             self._context.append(
@@ -182,7 +186,9 @@ class IOSPhoneAgent:
                 )
             )
         else:
-            screen_info = MessageBuilder.build_screen_info(current_app)
+            screen_info = MessageBuilder.build_screen_info(
+                current_app, device_type="ios", **self._pending_screen_info
+            )
             text_content = f"** Screen Info **\n\n{screen_info}"
 
             self._context.append(
@@ -239,6 +245,8 @@ class IOSPhoneAgent:
             result = self.action_handler.execute(
                 finish(message=str(e)), screenshot.width, screenshot.height
             )
+
+        self._pending_screen_info = result.context_data or {}
 
         # Add assistant response to context
         self._context.append(

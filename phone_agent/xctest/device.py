@@ -1,8 +1,8 @@
 """Device control utilities for iOS automation via WebDriverAgent."""
 
+import json
 import subprocess
 import time
-from typing import Optional
 
 from phone_agent.config.apps_ios import APP_PACKAGES_IOS as APP_PACKAGES, get_app_name
 
@@ -67,6 +67,47 @@ def get_current_app(
     return "System Home"
 
 
+def get_ui_tree(
+    wda_url: str = "http://localhost:8100",
+    session_id: str | None = None,
+    screen_width: int | None = None,
+    screen_height: int | None = None,
+) -> dict:
+    """Fetch the iOS accessibility hierarchy from WebDriverAgent."""
+    try:
+        import requests
+
+        url = _get_wda_session_url(wda_url, session_id, "source?format=json")
+        response = requests.get(url, timeout=15, verify=False)
+        response.raise_for_status()
+
+        payload = response.json().get("value")
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+
+        point_width, point_height = get_screen_size(wda_url, session_id)
+        nodes = _extract_ios_ui_nodes(
+            payload,
+            screen_width,
+            screen_height,
+            scale_x=(screen_width / point_width)
+            if screen_width and point_width
+            else None,
+            scale_y=(screen_height / point_height)
+            if screen_height and point_height
+            else None,
+        )
+        return {
+            "source": "wda_source_json",
+            "node_count": len(nodes),
+            "nodes": nodes,
+        }
+    except ImportError as exc:
+        raise ValueError("requests library required for iOS UI tree support") from exc
+    except Exception as exc:
+        raise ValueError(f"Failed to fetch iOS UI tree: {exc}") from exc
+
+
 def tap(
     x: int,
     y: int,
@@ -119,6 +160,129 @@ def tap(
         print("Error: requests library required. Install: pip install requests")
     except Exception as e:
         print(f"Error tapping: {e}")
+
+
+def _extract_ios_ui_nodes(
+    root: dict | list | None,
+    screen_width: int | None = None,
+    screen_height: int | None = None,
+    scale_x: float | None = None,
+    scale_y: float | None = None,
+) -> list[dict]:
+    """Flatten the iOS accessibility tree into normalized nodes."""
+    nodes: list[dict] = []
+
+    def visit(node: dict | list | None, path: str = "0") -> None:
+        if isinstance(node, list):
+            for index, child in enumerate(node):
+                visit(child, f"{path}.{index}")
+            return
+        if not isinstance(node, dict):
+            return
+
+        rect = node.get("rect") or {}
+        normalized = _normalize_ios_rect(
+            rect,
+            screen_width,
+            screen_height,
+            scale_x=scale_x,
+            scale_y=scale_y,
+        )
+        entry = {
+            "path": path,
+            "type": node.get("type") or node.get("elementType") or "",
+            "name": node.get("name") or "",
+            "label": node.get("label") or "",
+            "value": node.get("value") or "",
+            "enabled": bool(node.get("enabled", False)),
+            "visible": bool(node.get("visible", True)),
+            "accessible": bool(node.get("accessible", False)),
+            **normalized,
+        }
+        if _should_keep_ios_node(entry):
+            nodes.append(entry)
+
+        for index, child in enumerate(node.get("children") or []):
+            visit(child, f"{path}.{index}")
+
+    visit(root)
+    return nodes
+
+
+def _normalize_ios_rect(
+    rect: dict,
+    screen_width: int | None,
+    screen_height: int | None,
+    scale_x: float | None = None,
+    scale_y: float | None = None,
+) -> dict:
+    """Normalize an iOS WDA rect into point, pixel, and relative coordinates."""
+    x = int(float(rect.get("x", 0)))
+    y = int(float(rect.get("y", 0)))
+    width = int(float(rect.get("width", 0)))
+    height = int(float(rect.get("height", 0)))
+    right = x + width
+    bottom = y + height
+    center_x = x + int(width / 2)
+    center_y = y + int(height / 2)
+
+    resolved_scale_x = scale_x or SCALE_FACTOR
+    resolved_scale_y = scale_y or SCALE_FACTOR
+
+    result = {
+        "bounds_points": [x, y, right, bottom],
+        "center_points": [center_x, center_y],
+        "bounds_px": [
+            int(x * resolved_scale_x),
+            int(y * resolved_scale_y),
+            int(right * resolved_scale_x),
+            int(bottom * resolved_scale_y),
+        ],
+        "center_px": [
+            int(center_x * resolved_scale_x),
+            int(center_y * resolved_scale_y),
+        ],
+    }
+
+    if screen_width and screen_height:
+        result["bounds_rel"] = [
+            int(result["bounds_px"][0] / screen_width * 1000),
+            int(result["bounds_px"][1] / screen_height * 1000),
+            int(result["bounds_px"][2] / screen_width * 1000),
+            int(result["bounds_px"][3] / screen_height * 1000),
+        ]
+        result["center_rel"] = [
+            int(result["center_px"][0] / screen_width * 1000),
+            int(result["center_px"][1] / screen_height * 1000),
+        ]
+
+    return result
+
+
+def _should_keep_ios_node(node: dict) -> bool:
+    """Keep visible iOS nodes with identity or interaction semantics."""
+    left, top, right, bottom = node["bounds_px"]
+    has_area = right > left and bottom > top
+    has_identity = any([node["name"], node["label"], node["value"]])
+    interactive_types = (
+        "Button",
+        "Cell",
+        "Field",
+        "Key",
+        "Link",
+        "Image",
+        "ScrollView",
+        "SecureTextField",
+        "Slider",
+        "StaticText",
+        "Switch",
+        "TabBar",
+        "TextField",
+    )
+    is_interactive = node["accessible"] or any(
+        marker in node["type"] for marker in interactive_types
+    )
+    return has_area and node["visible"] and (has_identity or is_interactive)
 
 
 def double_tap(

@@ -445,10 +445,52 @@ phone-use --device-type ios phone screenshot --output ios_screen.png
 ```
 
 **Best practices:**
-- Make `screenshot` the first command in any new automation sequence. Verify element positions before issuing `tap` or `swipe`.
+- Use `screenshot` to validate the visual phone state: confirm the right app is open, the UI finished loading, and the target is actually visible before you act.
 - Use descriptive output filenames when capturing multiple states: `before.png`, `after_tap.png`.
 - Screenshots are full-resolution PNGs. On high-density screens (3x), a 1080-wide logical view may produce a 3240-pixel PNG. The coordinates you pass to `tap`/`swipe` should always be in the device's **logical pixel** space (match what you see in `adb shell wm size`), not the physical PNG dimensions.
 - On Android, if a screenshot is all-black, the screen may be locked or showing a secure screen (e.g. banking app). Unlock the device or navigate away from the secure view first.
+
+---
+
+### state
+
+Prints a structured overview of the current phone state using the native UI hierarchy. Without `--output`, it returns a simplified, agent-facing summary. With `--output`, it also saves the full raw state payload to a JSON file.
+
+```
+phone-use phone state [--output <path>]
+```
+
+| Argument | Type | Description |
+|---|---|---|
+| `--output`, `-o` | str | Optional file path to write the full state JSON |
+
+**When to use:**
+- Getting an overview of the current app before choosing coordinates
+- Inspecting native UI nodes, labels, ids, and bounds in a browser-like way
+- Debugging cases where a screenshot looks correct but the actionable element is unclear
+- Saving the full hierarchy for later analysis while keeping terminal output concise
+
+**Examples:**
+```bash
+# Print a summarized state view to stdout
+phone-use phone state
+
+# Save the full native state while still printing the simplified view
+phone-use phone state --output phone_state.json
+
+# iOS state inspection
+phone-use --device-type ios phone state --output ios_state.json
+```
+
+**How to read it:**
+- Think of `state` like a browser accessibility or DOM snapshot: it gives you an overview of the current app structure, notable nodes, and coordinates, instead of a rendered image.
+- The terminal output is intentionally simplified for quick inspection.
+- The optional output file preserves the full native tree in case you need more detail than the summarized view shows.
+
+**Best practices:**
+- Use `state` after `screenshot` when you need structure, not just pixels.
+- Use `screenshot` to validate what the user would see, and `state` to understand what the platform exposes as tappable or labeled elements.
+- On Android and iOS, `state` includes native bounds and coordinate data. HarmonyOS/HDC does not currently support this command.
 
 ---
 
@@ -517,9 +559,16 @@ python3 -c "from PIL import Image; img=Image.open('tmp.png'); print(img.size)"
 ```bash
 phone-use phone launch WeChat
 phone-use phone screenshot -o state.png
-# inspect state.png → then decide the tap coordinates
+# inspect state.png to validate the visual state
+phone-use phone state --output state.json
+# inspect the summarized terminal output or the full state.json for element structure
 phone-use phone tap 540 200
 ```
+
+**Use the two inspection tools together.**
+- `screenshot` tells you what the phone visually shows right now.
+- `state` tells you the current app structure in a browser-like overview, including notable native nodes and coordinates.
+- If the screenshot and state disagree, trust the screenshot for what is actually rendered and use the saved full state file to debug why the native hierarchy is incomplete or stale.
 
 **Add delays generously at first.** Network-dependent screens, animations, and transitions take time. Use `--delay 2.0` while developing; tune down to `--delay 0.5` once the sequence is stable.
 
@@ -533,7 +582,7 @@ phone-use phone launch <app>
 
 ### Reliability
 
-**Don't hard-code coordinates without verifying.** Screen layouts change with OS updates, font size settings, and app versions. Re-run `screenshot` and re-measure when a sequence stops working.
+**Don't hard-code coordinates without verifying.** Screen layouts change with OS updates, font size settings, and app versions. Re-run `screenshot`, then check `state` if you need a structural overview of the current app.
 
 **Handle text input carefully.** Always `tap` the field, then `clear`, then `type`. Skipping `clear` will append to whatever is already in the field.
 
