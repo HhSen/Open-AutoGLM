@@ -256,11 +256,11 @@ python main.py --apikey sk-xxxxx
 # Use English system prompt
 python main.py --lang en --base-url http://localhost:8000/v1 "Open Chrome browser"
 
-# List supported apps (Android)
-python main.py --list-apps
+# List installed apps (Android)
+python main.py phone list-apps
 
-# List supported apps (HarmonyOS)
-python main.py --device-type hdc --list-apps
+# List installed apps (HarmonyOS)
+python main.py --device-type hdc phone list-apps
 ```
 
 ### Direct Phone CLI (`phone-use`)
@@ -571,7 +571,7 @@ Phone Agent supports 50+ mainstream Chinese applications:
 | Utilities & Media        | GoogleClock, Chrome, GooglePlayStore, GooglePlayBooks, FilesbyGoogle                   |
 | Travel & Navigation      | GoogleMaps, Booking.com, Trip.com, Expedia, OpenTracks                                 |
 
-Run `python main.py --list-apps` to see the complete list.
+Run `python main.py phone list-apps` to see installed app ids with config labels when available.
 
 ### HarmonyOS Apps
 
@@ -590,7 +590,7 @@ Phone Agent supports 60+ HarmonyOS native apps and system apps:
 | System Apps              | Browser, Calendar, Camera, Clock, Cloud, File Manager, Gallery, Contacts, SMS, Settings |
 | Huawei Services          | AppGallery, Music, Video, Books, Themes, Weather                                       |
 
-Run `python main.py --device-type hdc --list-apps` to see the complete list.
+Run `python main.py --device-type hdc phone list-apps` to see installed app ids with config labels when available.
 
 ## Available Actions
 
@@ -967,8 +967,8 @@ python main.py --base-url {MODEL_URL} --model "autoglm-phone-9b-multilingual"
 # Run Agent (single task)
 python main.py --base-url {MODEL_URL} --model "autoglm-phone-9b-multilingual" "your task description"
 
-# View supported apps list
-python main.py --list-apps
+# View installed apps list
+python main.py phone list-apps
 ```
 
 ---

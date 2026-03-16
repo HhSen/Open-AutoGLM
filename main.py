@@ -16,12 +16,12 @@ Environment Variables:
 
 import argparse
 import base64
-from datetime import datetime, timezone
 import json
 import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from openai import OpenAI
@@ -30,9 +30,9 @@ from phone_agent import PhoneAgent
 from phone_agent.actions.handler import summarize_ui_tree_for_model
 from phone_agent.agent import AgentConfig
 from phone_agent.agent_ios import IOSAgentConfig, IOSPhoneAgent
-from phone_agent.config.apps import list_supported_apps
-from phone_agent.config.apps_harmonyos import list_supported_apps as list_harmonyos_apps
-from phone_agent.config.apps_ios import list_supported_apps as list_ios_apps
+from phone_agent.config.apps import get_app_name as get_android_app_name
+from phone_agent.config.apps_harmonyos import get_app_name as get_harmony_app_name
+from phone_agent.config.apps_ios import get_app_name as get_ios_app_name
 from phone_agent.device_factory import DeviceType, get_device_factory, set_device_type
 from phone_agent.model import ModelConfig
 from phone_agent.phone_mode_logging import (
@@ -479,7 +479,6 @@ Examples:
     phone-use --connect 192.168.1.100:5555
     phone-use --list-devices
     phone-use --enable-tcpip
-    phone-use --list-apps
     phone-use --device-type ios "Open Safari and search for iPhone tips"
     phone-use --device-type ios --wda-url http://192.168.1.100:8100
     phone-use --device-type ios --list-devices
@@ -553,9 +552,6 @@ Direct device control (no AI) — use the 'phone' subcommand:
     )
     parser.add_argument(
         "--quiet", "-q", action="store_true", help="Suppress verbose output"
-    )
-    parser.add_argument(
-        "--list-apps", action="store_true", help="List supported apps and exit"
     )
     parser.add_argument(
         "--lang",
@@ -726,6 +722,11 @@ Examples:
 
     # --- current-app ---
     action_parsers.add_parser("current-app", help="Print the currently active app")
+
+    # --- list-apps ---
+    action_parsers.add_parser(
+        "list-apps", help="List installed apps on the connected device"
+    )
 
     # --- state ---
     p = action_parsers.add_parser(
@@ -928,7 +929,7 @@ def handle_device_commands(args) -> bool:
     return False
 
 
-def run_phone_command(args: argparse.Namespace) -> None:
+def run_direct_phone(args: argparse.Namespace) -> None:
     """
     Execute a direct phone control command without running the AI agent.
 
@@ -948,8 +949,8 @@ def run_phone_command(args: argparse.Namespace) -> None:
         device_type = DeviceType.IOS
 
     # --- resolve action name (may be None if user typed just 'phone') ---
-    phone_action: str | None = getattr(args, "phone_action", None)
-    if not phone_action:
+    action: str | None = getattr(args, "phone_action", None)
+    if not action:
         # Print usage hint and exit
         print("Usage: python main.py phone <action> [options]")
         print("Run 'python main.py phone --help' for available actions.")
@@ -958,7 +959,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
     action_log = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "command": "phone",
-        "action": phone_action,
+        "action": action,
         "device_type": device_type.value,
         "device_id": device_id,
         "cwd": os.getcwd(),
@@ -995,6 +996,19 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 f"Check the log for details: {log_path}"
             )
 
+    def _print_labeled_apps(
+        identifiers: list[str], lookup_label, heading: str, note: str | None = None
+    ) -> None:
+        print(heading)
+        for identifier in identifiers:
+            label = lookup_label(identifier)
+            if label:
+                print(f"  - {label} ({identifier})")
+            else:
+                print(f"  - {identifier}")
+        if note:
+            print(f"\nNote: {note}")
+
     # ------------------------------------------------------------------ #
     # iOS — delegate everything through xctest module + WDA session       #
     # ------------------------------------------------------------------ #
@@ -1017,7 +1031,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
         action_log["wda_session_id"] = session_id
 
         before_state = None
-        if phone_action in MUTATING_PHONE_ACTIONS:
+        if action in MUTATING_PHONE_ACTIONS:
             before_state = _capture_phone_state(
                 lambda: xctest.get_current_app(wda_url=wda_url, session_id=session_id),
                 lambda: xctest.get_screenshot(
@@ -1029,7 +1043,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
             action_log["before"] = before_state
 
         try:
-            if phone_action == "tap":
+            if action == "tap":
                 xctest.tap(
                     args.x,
                     args.y,
@@ -1040,7 +1054,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 print(f"Tapped ({args.x}, {args.y})")
                 action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
 
-            elif phone_action == "double-tap":
+            elif action == "double-tap":
                 xctest.double_tap(
                     args.x,
                     args.y,
@@ -1051,7 +1065,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 print(f"Double-tapped ({args.x}, {args.y})")
                 action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
 
-            elif phone_action == "long-press":
+            elif action == "long-press":
                 xctest.long_press(
                     args.x,
                     args.y,
@@ -1068,7 +1082,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                     "delay": args.delay,
                 }
 
-            elif phone_action == "swipe":
+            elif action == "swipe":
                 xctest.swipe(
                     args.start_x,
                     args.start_y,
@@ -1091,21 +1105,21 @@ def run_phone_command(args: argparse.Namespace) -> None:
                     "delay": args.delay,
                 }
 
-            elif phone_action == "type":
+            elif action == "type":
                 from phone_agent.xctest.input import type_text as xctest_type
 
                 xctest_type(args.text, wda_url=wda_url, session_id=session_id)
                 print(f"Typed: {args.text!r}")
                 action_log["params"] = {"text": args.text}
 
-            elif phone_action == "clear":
+            elif action == "clear":
                 from phone_agent.xctest.input import clear_text as xctest_clear
 
                 xctest_clear(wda_url=wda_url, session_id=session_id)
                 print("Cleared text")
                 action_log["params"] = {}
 
-            elif phone_action == "back":
+            elif action == "back":
                 xctest.back(
                     wda_url=wda_url,
                     session_id=session_id,
@@ -1114,7 +1128,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 print("Pressed back")
                 action_log["params"] = {"delay": args.delay}
 
-            elif phone_action == "home":
+            elif action == "home":
                 xctest.home(
                     wda_url=wda_url,
                     session_id=session_id,
@@ -1123,7 +1137,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 print("Went to home screen")
                 action_log["params"] = {"delay": args.delay}
 
-            elif phone_action == "launch":
+            elif action == "launch":
                 success = xctest.launch_app(
                     args.app_name,
                     wda_url=wda_url,
@@ -1139,10 +1153,10 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 else:
                     raise ValueError(
                         f"Could not launch app '{args.app_name}'. "
-                        "Run 'python main.py --device-type ios --list-apps' to see supported apps."
+                        "Run 'python main.py --device-type ios phone list-apps' to see supported apps."
                     )
 
-            elif phone_action == "screenshot":
+            elif action == "screenshot":
                 from phone_agent.xctest.screenshot import (
                     get_screenshot as xctest_screenshot,
                 )
@@ -1164,12 +1178,22 @@ def run_phone_command(args: argparse.Namespace) -> None:
                     "screenshot_sha256": hash_screenshot_base64(shot.base64_data),
                 }
 
-            elif phone_action == "current-app":
+            elif action == "current-app":
                 app = xctest.get_current_app(wda_url=wda_url, session_id=session_id)
                 print(f"Current app: {app}")
                 action_log["result"] = {"current_app": app}
 
-            elif phone_action == "state":
+            elif action == "list-apps":
+                bundle_ids = xctest.list_installed_apps(device_id=device_id)
+                _print_labeled_apps(
+                    bundle_ids,
+                    get_ios_app_name,
+                    "Installed iOS apps:",
+                    "labels from `phone_agent/config/apps_ios.py` are shown when known; otherwise the bundle id is printed.",
+                )
+                action_log["result"] = {"installed_app_count": len(bundle_ids)}
+
+            elif action == "state":
                 shot = xctest.get_screenshot(
                     wda_url=wda_url,
                     session_id=session_id,
@@ -1188,7 +1212,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                     "output": os.path.abspath(args.output) if args.output else None,
                 }
 
-            if phone_action in MUTATING_PHONE_ACTIONS:
+            if action in MUTATING_PHONE_ACTIONS:
                 after_state = _capture_phone_state(
                     lambda: xctest.get_current_app(
                         wda_url=wda_url, session_id=session_id
@@ -1223,14 +1247,14 @@ def run_phone_command(args: argparse.Namespace) -> None:
         from phone_agent.hdc import set_hdc_verbose
 
         set_hdc_verbose(False)  # keep phone commands clean; user can set env var
-        if phone_action == "state":
+        if action == "state":
             print("Error: state is currently supported on adb and ios, not hdc.")
             sys.exit(1)
 
     factory = get_device_factory()
 
     before_state = None
-    if phone_action in MUTATING_PHONE_ACTIONS:
+    if action in MUTATING_PHONE_ACTIONS:
         before_state = _capture_phone_state(
             lambda: factory.get_current_app(device_id=device_id),
             lambda: factory.get_screenshot(device_id=device_id),
@@ -1238,17 +1262,17 @@ def run_phone_command(args: argparse.Namespace) -> None:
         action_log["before"] = before_state
 
     try:
-        if phone_action == "tap":
+        if action == "tap":
             factory.tap(args.x, args.y, device_id=device_id, delay=args.delay)
             print(f"Tapped ({args.x}, {args.y})")
             action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
 
-        elif phone_action == "double-tap":
+        elif action == "double-tap":
             factory.double_tap(args.x, args.y, device_id=device_id, delay=args.delay)
             print(f"Double-tapped ({args.x}, {args.y})")
             action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
 
-        elif phone_action == "long-press":
+        elif action == "long-press":
             factory.long_press(
                 args.x,
                 args.y,
@@ -1264,7 +1288,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 "delay": args.delay,
             }
 
-        elif phone_action == "swipe":
+        elif action == "swipe":
             factory.swipe(
                 args.start_x,
                 args.start_y,
@@ -1286,7 +1310,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 "delay": args.delay,
             }
 
-        elif phone_action == "type":
+        elif action == "type":
             if device_type == DeviceType.ADB:
                 from phone_agent.adb.input import (
                     detect_and_set_adb_keyboard,
@@ -1303,22 +1327,22 @@ def run_phone_command(args: argparse.Namespace) -> None:
             print(f"Typed: {args.text!r}")
             action_log["params"] = {"text": args.text}
 
-        elif phone_action == "clear":
+        elif action == "clear":
             factory.clear_text(device_id=device_id)
             print("Cleared text")
             action_log["params"] = {}
 
-        elif phone_action == "back":
+        elif action == "back":
             factory.back(device_id=device_id, delay=args.delay)
             print("Pressed back")
             action_log["params"] = {"delay": args.delay}
 
-        elif phone_action == "home":
+        elif action == "home":
             factory.home(device_id=device_id, delay=args.delay)
             print("Went to home screen")
             action_log["params"] = {"delay": args.delay}
 
-        elif phone_action == "launch":
+        elif action == "launch":
             success = factory.launch_app(
                 args.app_name, device_id=device_id, delay=args.delay
             )
@@ -1332,10 +1356,10 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 dt = args.device_type
                 raise ValueError(
                     f"Could not launch app '{args.app_name}'. "
-                    f"Run 'python main.py --device-type {dt} --list-apps' to see supported apps."
+                    f"Run 'python main.py --device-type {dt} phone list-apps' to see supported apps."
                 )
 
-        elif phone_action == "screenshot":
+        elif action == "screenshot":
             shot = factory.get_screenshot(device_id=device_id)
             png_bytes = base64.b64decode(shot.base64_data)
             with open(args.output, "wb") as f:
@@ -1349,12 +1373,30 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 "screenshot_sha256": hash_screenshot_base64(shot.base64_data),
             }
 
-        elif phone_action == "current-app":
+        elif action == "current-app":
             app = factory.get_current_app(device_id=device_id)
             print(f"Current app: {app}")
             action_log["result"] = {"current_app": app}
 
-        elif phone_action == "state":
+        elif action == "list-apps":
+            packages = factory.list_installed_apps(device_id=device_id)
+            if device_type == DeviceType.HDC:
+                _print_labeled_apps(
+                    packages,
+                    get_harmony_app_name,
+                    "Installed HarmonyOS apps:",
+                    "labels from `phone_agent/config/apps_harmonyos.py` are shown when known; otherwise the bundle name is printed.",
+                )
+            else:
+                _print_labeled_apps(
+                    packages,
+                    get_android_app_name,
+                    "Installed Android apps:",
+                    "labels from `phone_agent/config/apps.py` are shown when known; otherwise the package name is printed.",
+                )
+            action_log["result"] = {"installed_app_count": len(packages)}
+
+        elif action == "state":
             shot = factory.get_screenshot(device_id=device_id)
             state = factory.get_ui_tree(
                 device_id=device_id,
@@ -1368,7 +1410,7 @@ def run_phone_command(args: argparse.Namespace) -> None:
                 "output": os.path.abspath(args.output) if args.output else None,
             }
 
-        if phone_action in MUTATING_PHONE_ACTIONS:
+        if action in MUTATING_PHONE_ACTIONS:
             after_state = _capture_phone_state(
                 lambda: factory.get_current_app(device_id=device_id),
                 lambda: factory.get_screenshot(device_id=device_id),
@@ -1408,7 +1450,7 @@ def main():
     # Phone mode — direct device control, no AI agent                    #
     # ------------------------------------------------------------------ #
     if getattr(args, "command", None) == "phone":
-        run_phone_command(args)
+        run_direct_phone(args)
         return
 
     # Set device type globally based on args
@@ -1428,30 +1470,6 @@ def main():
         from phone_agent.hdc import set_hdc_verbose
 
         set_hdc_verbose(True)
-
-    # Handle --list-apps (no system check needed)
-    if args.list_apps:
-        if device_type == DeviceType.HDC:
-            print("Supported HarmonyOS apps:")
-            apps = list_harmonyos_apps()
-        elif device_type == DeviceType.IOS:
-            print("Supported iOS apps:")
-            print("\nNote: For iOS apps, Bundle IDs are configured in:")
-            print("  phone_agent/config/apps_ios.py")
-            print("\nCurrently configured apps:")
-            apps = list_ios_apps()
-        else:
-            print("Supported Android apps:")
-            apps = list_supported_apps()
-
-        for app in sorted(apps):
-            print(f"  - {app}")
-
-        if device_type == DeviceType.IOS:
-            print(
-                "\nTo add iOS apps, find the Bundle ID and add to APP_PACKAGES_IOS dictionary."
-            )
-        return
 
     # Handle device commands (these may need partial system checks)
     if handle_device_commands(args):

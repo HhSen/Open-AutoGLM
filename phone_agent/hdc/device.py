@@ -87,6 +87,36 @@ def get_current_app(device_id: str | None = None) -> str:
     return get_app_name(foreground_bundle) or foreground_bundle
 
 
+def list_installed_apps(device_id: str | None = None) -> list[str]:
+    """List installed HarmonyOS bundle names from the connected device."""
+    hdc_prefix = _get_hdc_prefix(device_id)
+    result = _run_hdc_checked(
+        hdc_prefix,
+        ["shell", "bm", "dump", "-a"],
+        "list installed apps",
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    return _parse_installed_bundle_output(result.stdout)
+
+
+def _parse_installed_bundle_output(output: str) -> list[str]:
+    """Parse `bm dump -a` output into sorted bundle names."""
+    bundles: set[str] = set()
+    for line in output.splitlines():
+        match = re.search(r"bundleName\s*[:=]\s*([A-Za-z0-9_.]+)", line)
+        if match:
+            bundles.add(match.group(1))
+            continue
+
+        match = re.search(r"bundle\s+name\s*[:=]\s*([A-Za-z0-9_.]+)", line, re.I)
+        if match:
+            bundles.add(match.group(1))
+
+    return sorted(bundles)
+
+
 def tap(
     x: int, y: int, device_id: str | None = None, delay: float | None = None
 ) -> None:

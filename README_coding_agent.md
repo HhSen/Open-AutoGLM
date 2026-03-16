@@ -144,8 +144,8 @@ python main.py --apikey sk-xxxxx
 # English system prompt
 python main.py --lang en --base-url <MODEL_API_URL> "Open Chrome browser"
 
-# List supported apps
-python main.py --list-apps
+# List installed apps
+python main.py phone list-apps
 
 # Specify device
 python main.py --device-id 192.168.1.100:5555 --base-url <MODEL_API_URL> "Open TikTok"
@@ -346,8 +346,8 @@ python main.py --apikey sk-xxxxx
 # 使用英文系统提示词
 python main.py --lang en --base-url <模型API地址> "Open Chrome browser"
 
-# 列出支持的应用
-python main.py --list-apps
+# 列出已安装的应用
+python main.py phone list-apps
 
 # 指定设备
 python main.py --device-id 192.168.1.100:5555 --base-url <模型API地址> "打开抖音刷视频"

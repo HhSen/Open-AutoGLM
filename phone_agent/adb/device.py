@@ -52,6 +52,32 @@ def get_current_app(device_id: str | None = None) -> str:
     return get_app_name(package_name) or package_name
 
 
+def list_installed_apps(device_id: str | None = None) -> list[str]:
+    """List installed Android package names from the connected device."""
+    adb_prefix = _get_adb_prefix(device_id)
+    result = _run_adb_command(
+        adb_prefix,
+        ["shell", "pm", "list", "packages"],
+        "list installed apps",
+    )
+    return _parse_installed_package_output(result.stdout)
+
+
+def _parse_installed_package_output(output: str) -> list[str]:
+    """Parse `pm list packages` output into sorted package names."""
+    packages: set[str] = set()
+    for line in output.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line.startswith("package:"):
+            line = line[len("package:") :]
+        package_name = line.strip()
+        if package_name:
+            packages.add(package_name)
+    return sorted(packages)
+
+
 def get_ui_tree(
     device_id: str | None = None,
     screen_width: int | None = None,

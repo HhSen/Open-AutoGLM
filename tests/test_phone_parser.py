@@ -59,3 +59,12 @@ def test_parse_phone_state_args(monkeypatch):
     assert args.command == "phone"
     assert args.phone_action == "state"
     assert args.output == "state.json"
+
+
+def test_parse_phone_list_apps_args(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["phone-use", "phone", "list-apps"])
+
+    args = main.parse_args()
+
+    assert args.command == "phone"
+    assert args.phone_action == "list-apps"

@@ -462,15 +462,15 @@ phone-use phone launch Settings --delay 2.0
 phone-use --device-type hdc phone launch 美团
 ```
 
-**Finding supported app names:**
+**Finding installed app names:**
 ```bash
-phone-use --list-apps
-phone-use --device-type hdc --list-apps
-phone-use --device-type ios --list-apps
+phone-use phone list-apps
+phone-use --device-type hdc phone list-apps
+phone-use --device-type ios phone list-apps
 ```
 
 **Best practices:**
-- App names are case-sensitive and must match the entries in the app config exactly. Run `--list-apps` to confirm the exact name.
+- App names are case-sensitive and must match the entries in the app config exactly. Run `phone list-apps` to confirm the exact name.
 - Use `--delay 2.0` or higher for heavy apps (games, camera) that take longer to reach their initial screen.
 - If an app is already running in the foreground, `launch` typically brings it to the foreground without restarting it. If you need a fresh launch, use `back`/`home` first or handle the running-app state manually.
 - If `launch` returns an error, the app name is not in the supported list. Add it to the appropriate config file (`phone_agent/config/apps.py`, `apps_harmonyos.py`, or `apps_ios.py`).

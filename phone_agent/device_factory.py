@@ -52,6 +52,14 @@ class DeviceFactory:
         """Get current app name."""
         return self.module.get_current_app(device_id)
 
+    def list_installed_apps(self, device_id: str | None = None) -> list[str]:
+        """List installed apps when supported by the backend."""
+        if not hasattr(self.module, "list_installed_apps"):
+            raise NotImplementedError(
+                f"Installed app listing is not supported for device type: {self.device_type.value}"
+            )
+        return self.module.list_installed_apps(device_id)
+
     def get_ui_tree(
         self,
         device_id: str | None = None,

@@ -1,6 +1,7 @@
 """Device control utilities for iOS automation via WebDriverAgent."""
 
 import json
+import plistlib
 import subprocess
 import time
 
@@ -75,6 +76,50 @@ def get_current_app(
         return "System Home"
 
     return get_app_name(bundle_id) or bundle_id
+
+
+def list_installed_apps(device_id: str | None = None) -> list[str]:
+    """List installed iOS apps from the connected device."""
+    command = ["ideviceinstaller"]
+    if device_id:
+        command.extend(["-u", device_id])
+    command.extend(["-l", "-o", "xml"])
+
+    try:
+        result = subprocess.run(command, capture_output=True, timeout=20)
+    except FileNotFoundError as exc:
+        raise ValueError(
+            "ideviceinstaller not found. Install it to list installed iOS apps."
+        ) from exc
+
+    if result.returncode != 0:
+        output = (result.stderr or result.stdout or b"").decode(
+            "utf-8", errors="replace"
+        )
+        raise ValueError(output.strip() or "Failed to list installed iOS apps")
+
+    return _parse_installed_apps_plist(result.stdout)
+
+
+def _parse_installed_apps_plist(payload: bytes) -> list[str]:
+    """Parse `ideviceinstaller -l -o xml` output into sorted bundle ids."""
+    data = plistlib.loads(payload)
+    bundle_ids: set[str] = set()
+
+    if not isinstance(data, list):
+        return []
+
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+
+        bundle_id = item.get("CFBundleIdentifier")
+        if not isinstance(bundle_id, str) or not bundle_id:
+            continue
+
+        bundle_ids.add(bundle_id)
+
+    return sorted(bundle_ids)
 
 
 def get_ui_tree(

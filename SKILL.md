@@ -1,20 +1,19 @@
 ---
 name: phone-use
-description: Automates phone interactions for web testing, screenshots or whatever interaction you need with a phone. Use when the task need to interact with any mobile facility. Supports Android(ADB), HarmonyOS(HDC) and iOS.
+description: Automates phone interactions for web testing, screenshots, or any direct mobile interaction. Use when a task needs to interact with a real mobile device through Android (ADB), HarmonyOS (HDC), or iOS.
 ---
-# Phone CLI — Direct Device Control
 
-The `phone` subcommand lets you operate a connected device directly from the command line — no AI model, no agent loop. Each action maps 1-to-1 to a device operation.
+# Phone Automation with phone-use CLI
 
-```
+The `phone-use` command provides direct device control from the command line. Unlike an agent loop, each command maps 1-to-1 to a device action, so you compose reliable mobile workflows step by step.
+
+```bash
 phone-use [DEVICE FLAGS] phone <action> [ACTION FLAGS]
 ```
 
----
-
 ## Prerequisites
 
-The cli should be properly setup with different device dependencies like ADB for Android.
+Before using this skill, the device backend must already be installed and working.
 
 | Device | Requirement |
 |---|---|
@@ -22,23 +21,23 @@ The cli should be properly setup with different device dependencies like ADB for
 | HarmonyOS (HDC) | `hdc` installed, USB debugging enabled |
 | iOS | `libimobiledevice` installed, WebDriverAgent running, port forwarding active |
 
-Verify your setup:
+Verify the setup first:
+
 ```bash
 phone-use --list-devices
 phone-use --device-type ios --wda-status
 ```
 
----
+## Core Workflow
 
-## Device Flags
+1. **Reset**: `phone-use phone home` to start from a known state
+2. **Open target app**: `phone-use phone launch "App Name"`
+3. **Inspect**: `phone-use phone screenshot -o screen.png` and/or `phone-use phone state`
+4. **Interact**: use gestures and input commands like `tap`, `swipe`, `type`
+5. **Verify**: run `screenshot`, `state`, or `current-app` after important steps
+6. **Recover**: use `back` or `home` when the flow drifts off course
 
-These flags go **before** `phone` on the command line and apply to every action.
-
-| Flag | Default | Description |
-|---|---|---|
-| `--device-type adb\|hdc\|ios` | `adb` | Which device backend to use |
-| `--device-id <id>` | auto-detect | ADB serial, HDC target, or iOS UDID |
-| `--wda-url <url>` | `http://localhost:8100` | WebDriverAgent base URL (iOS only) |
+## Device Backends
 
 ```bash
 # Android (default)
@@ -57,586 +56,489 @@ phone-use --device-id emulator-5554 phone tap 540 960
 phone-use --device-type ios --wda-url http://192.168.1.10:8100 phone tap 540 960
 ```
 
----
+- `adb`: default Android backend
+- `hdc`: HarmonyOS backend
+- `ios`: iOS backend through WebDriverAgent
 
-## Actions
+## Device Flags
 
-### tap
+These flags go before `phone` and apply to every action.
+
+| Flag | Default | Description |
+|---|---|---|
+| `--device-type adb|hdc|ios` | `adb` | Selects the device backend |
+| `--device-id <id>` | auto-detect | ADB serial, HDC target, or iOS UDID |
+| `--wda-url <url>` | `http://localhost:8100` | WebDriverAgent base URL for iOS |
+
+## Essential Commands
+
+```bash
+# Navigation and app control
+phone-use phone home
+phone-use phone back
+phone-use phone launch "Settings"
+phone-use phone current-app
+
+# Screen inspection
+phone-use phone screenshot -o screen.png
+phone-use phone state
+phone-use phone state --output state.json
+
+# Touch gestures
+phone-use phone tap 540 960
+phone-use phone double-tap 540 960
+phone-use phone long-press 540 960 --duration-ms 1200
+phone-use phone swipe 540 1500 540 400
+
+# Text input
+phone-use phone clear
+phone-use phone type "hello world"
+```
+
+## Commands by Purpose
+
+### App Control and Navigation
+
+Use these commands to move between screens, reset state, and open apps.
+
+```bash
+phone-use phone home [--delay SECONDS]
+phone-use phone back [--delay SECONDS]
+phone-use phone launch "<app_name>" [--delay SECONDS]
+phone-use phone current-app
+```
+
+#### `home`
+
+Returns to the device home screen.
+
+**Use when:**
+- Starting any new task
+- Resetting the phone to a known state
+- Exiting an unknown app flow quickly
+
+**Examples:**
+
+```bash
+phone-use phone home
+phone-use phone home --delay 1.5
+```
+
+**Best practices:**
+- Start new flows with `home`.
+- Prefer `home` over repeated `back` calls when recovery matters more than preserving app state.
+- After `home`, prefer `launch` over tapping app icons by coordinate.
+
+#### `back`
+
+Navigates backward. On Android and HarmonyOS it presses the system back button. On iOS it performs a left-edge swipe.
+
+**Use when:**
+- Returning one screen in the current flow
+- Dismissing dialogs or sheets
+- Closing the keyboard without submitting
+
+**Examples:**
+
+```bash
+phone-use phone back
+phone-use phone back --delay 2.0
+```
+
+**Best practices:**
+- Some apps intercept back and show an exit confirmation.
+- On iOS, custom navigation may require tapping the on-screen back button instead.
+
+#### `launch`
+
+Launches an app by name from the supported app config.
+
+```bash
+phone-use phone launch "<app_name>" [--delay SECONDS]
+```
+
+**Use when:**
+- Starting work in a specific app
+- Returning to an app after `home`
+- Opening system apps like Settings or Camera
+
+**Examples:**
+
+```bash
+phone-use phone launch WeChat
+phone-use phone launch Settings --delay 2.0
+phone-use --device-type hdc phone launch 美团
+```
+
+Find installed app names:
+
+```bash
+phone-use phone list-apps
+phone-use --device-type hdc phone list-apps
+phone-use --device-type ios phone list-apps
+```
+
+**Best practices:**
+- App names are case-sensitive.
+- Use longer delays for heavy apps.
+- If the app name is missing, add it to the relevant app config.
+
+#### `current-app`
+
+Prints the current foreground app.
+
+```bash
+phone-use phone current-app
+```
+
+**Use when:**
+- Verifying where the flow landed
+- Checking whether `launch` succeeded
+- Guarding destructive actions
+
+### Screen Inspection and Verification
+
+Use these commands before and after actions to confirm the visual and structural state of the phone.
+
+```bash
+phone-use phone screenshot --output <path>
+phone-use phone state [--output <path>]
+```
+
+#### `screenshot`
+
+Captures the current screen as a PNG.
+
+```bash
+phone-use phone screenshot --output <path>
+```
+
+**Use when:**
+- Confirming what the device currently shows
+- Measuring coordinates before tapping
+- Capturing evidence of a UI state
+
+**Examples:**
+
+```bash
+phone-use phone screenshot --output screen.png
+phone-use phone screenshot -o /tmp/before_tap.png
+phone-use --device-type ios phone screenshot --output ios_screen.png
+```
+
+**Best practices:**
+- Use descriptive filenames like `before.png` and `after_login.png`.
+- Coordinates for actions should use logical device pixels, not raw PNG dimensions.
+- If the screenshot is black on Android, the screen may be locked or secure.
+
+#### `state`
+
+Prints a structured summary of the current native UI hierarchy. With `--output`, it also saves the raw JSON payload.
+
+```bash
+phone-use phone state [--output <path>]
+```
+
+**Use when:**
+- You need structure, labels, ids, or bounds
+- A screenshot is not enough to identify the right target
+- You want a saved UI hierarchy for later debugging
+
+**Examples:**
+
+```bash
+phone-use phone state
+phone-use phone state --output phone_state.json
+phone-use --device-type ios phone state --output ios_state.json
+```
+
+**Best practices:**
+- Think of `state` like a DOM or accessibility snapshot.
+- Use `screenshot` for what is visually rendered and `state` for what the platform exposes.
+- HarmonyOS/HDC does not currently support `state`.
+
+### Touch Gestures
+
+Use these commands for coordinate-based interaction on the device screen.
+
+```bash
+phone-use phone tap <x> <y> [--delay SECONDS]
+phone-use phone double-tap <x> <y> [--delay SECONDS]
+phone-use phone long-press <x> <y> [--duration-ms MS] [--delay SECONDS]
+phone-use phone swipe <start_x> <start_y> <end_x> <end_y> [--duration-ms MS] [--delay SECONDS]
+```
+
+#### `tap`
 
 Taps a single point on the screen.
 
-```
-phone-use phone tap <x> <y> [--delay SECONDS]
-```
-
-| Argument | Type | Description |
-|---|---|---|
-| `x` | int | X coordinate in pixels |
-| `y` | int | Y coordinate in pixels |
-| `--delay` | float | Seconds to wait after the tap (default: 1.0) |
-
-**When to use:**
-- Pressing a button, link, or icon
-- Opening an app from the home screen
-- Selecting a list item or menu option
+**Use when:**
+- Pressing a button, icon, link, or list item
 - Confirming a dialog
+- Focusing an input field before typing
 
 **Examples:**
+
 ```bash
-# Tap the center of a 1080×1920 screen
 phone-use phone tap 540 960
-
-# Tap with a shorter delay when response is fast
 phone-use phone tap 200 400 --delay 0.5
-
-# Tap with a longer delay when the app loads slowly after tapping
 phone-use phone tap 540 100 --delay 3.0
 ```
 
 **Best practices:**
-- Use `screenshot` first to confirm the element's coordinates before tapping.
-- If the tap has no effect, the screen may still be loading — increase `--delay` or add a `back`/`home` reset and retry.
-- For small touch targets (icons under ~60px), aim for the center of the element.
+- Use `screenshot` first when coordinates are uncertain.
+- Increase `--delay` if nothing happens because the UI is still loading.
+- Aim for the center of small targets.
 
----
+#### `double-tap`
 
-### double-tap
+Taps the same point twice in quick succession.
 
-Taps the same point twice in quick succession (~100 ms apart).
-
-```
-phone-use phone double-tap <x> <y> [--delay SECONDS]
-```
-
-| Argument | Type | Description |
-|---|---|---|
-| `x` | int | X coordinate in pixels |
-| `y` | int | Y coordinate in pixels |
-| `--delay` | float | Seconds to wait after both taps |
-
-**When to use:**
-- Zooming in on a map or image
-- Opening a file in some file managers
-- Triggering double-tap gesture actions in apps (e.g. liking a post in Instagram)
+**Use when:**
+- Triggering zoom gestures
+- Activating app-specific double-tap actions
 
 **Examples:**
-```bash
-# Double-tap to zoom in on a map
-phone-use phone double-tap 540 960
 
-# Double-tap to like a photo
+```bash
+phone-use phone double-tap 540 960
 phone-use phone double-tap 540 700 --delay 0.5
 ```
 
 **Best practices:**
-- Most tappable UI elements respond to single tap. Reach for `double-tap` only when the app explicitly requires it.
-- If the action isn't registering, check that no modal or overlay is covering the target.
+- Prefer `tap` unless the app clearly expects a double tap.
+- Re-check the screen if the gesture does not register.
 
----
-
-### long-press
+#### `long-press`
 
 Presses and holds a point on the screen.
 
-```
-phone-use phone long-press <x> <y> [--duration-ms MS] [--delay SECONDS]
-```
-
-| Argument | Type | Description |
-|---|---|---|
-| `x` | int | X coordinate in pixels |
-| `y` | int | Y coordinate in pixels |
-| `--duration-ms` | int | Press duration in milliseconds (default: 3000) |
-| `--delay` | float | Seconds to wait after the press |
-
-**When to use:**
-- Opening a context menu on an item (app icon, list entry, text selection)
-- Activating drag-and-drop
-- Selecting text by holding on a word
-- Rearranging home screen icons
+**Use when:**
+- Opening context menus
+- Preparing for drag-and-drop
+- Selecting text
 
 **Examples:**
+
 ```bash
-# Long-press to open an app's context menu (1 second is usually enough)
 phone-use phone long-press 200 400 --duration-ms 1000
-
-# Long-press to select text (default 3 seconds)
 phone-use phone long-press 540 600
-
-# Long-press for drag preparation
 phone-use phone long-press 150 900 --duration-ms 1500
 ```
 
 **Best practices:**
-- 1000–1500 ms is sufficient for most context menus. 3000 ms (the default) is conservative; reduce it to avoid triggering unintended behaviors.
-- After a long-press that opens a menu, wait a moment before sending the next `tap` to select a menu item.
+- `1000-1500 ms` is enough for most context menus.
+- Wait briefly after the press before tapping a menu item.
 
----
-
-### swipe
+#### `swipe`
 
 Moves a finger from one coordinate to another.
 
-```
-phone-use phone swipe <start_x> <start_y> <end_x> <end_y> [--duration-ms MS] [--delay SECONDS]
-```
-
-| Argument | Type | Description |
-|---|---|---|
-| `start_x` | int | Start X in pixels |
-| `start_y` | int | Start Y in pixels |
-| `end_x` | int | End X in pixels |
-| `end_y` | int | End Y in pixels |
-| `--duration-ms` | int | Swipe speed in milliseconds (default: system default ~300 ms) |
-| `--delay` | float | Seconds to wait after the swipe |
-
-**When to use:**
-- Scrolling a list or feed up or down
-- Swiping between pages or tabs
-- Pulling down the notification shade
-- Dismissing a card or notification with a horizontal swipe
-- Unlocking the screen (if no passcode)
-
-**Common swipe directions:**
-
-| Intent | start → end |
-|---|---|
-| Scroll down (content moves up) | `(540, 1500) → (540, 400)` |
-| Scroll up (content moves down) | `(540, 400) → (540, 1500)` |
-| Swipe right (go to previous page) | `(100, 960) → (900, 960)` |
-| Swipe left (go to next page) | `(900, 960) → (100, 960)` |
-| Pull down notification shade | `(540, 0) → (540, 800)` |
+**Use when:**
+- Scrolling lists or feeds
+- Moving between pages or tabs
+- Pulling system panels or dismissing cards
 
 **Examples:**
+
 ```bash
-# Scroll down a list
 phone-use phone swipe 540 1500 540 400
-
-# Scroll slowly (useful when triggering pull-to-refresh)
 phone-use phone swipe 540 400 540 1000 --duration-ms 1200
-
-# Dismiss a notification card by swiping right
 phone-use phone swipe 540 300 1000 300 --duration-ms 200
 ```
 
+Common swipe directions:
+
+| Intent | start -> end |
+|---|---|
+| Scroll down (content moves up) | `(540, 1500) -> (540, 400)` |
+| Scroll up (content moves down) | `(540, 400) -> (540, 1500)` |
+| Swipe right | `(100, 960) -> (900, 960)` |
+| Swipe left | `(900, 960) -> (100, 960)` |
+| Pull notification shade | `(540, 0) -> (540, 800)` |
+
 **Best practices:**
-- Keep start/end coordinates away from the very edges of the screen — edge zones are often reserved for system gestures (back, recent apps, notification shade).
-- Slow swipes (`--duration-ms 800`+) are better for pull-to-refresh. Fast swipes (`--duration-ms 100–200`) feel more like flicks and trigger momentum scrolling.
-- iOS does not have a hardware back button. Use a right-to-left swipe from the left edge (`swipe 0 500 350 500`) or the `back` action which does this automatically.
+- Avoid very edge-heavy coordinates because they may trigger system gestures.
+- Use longer durations for pull-to-refresh and shorter durations for flick-like motion.
+- On iOS, `back` uses the same left-edge gesture pattern.
 
----
+### Text Input
 
-### type
+Use these commands after focusing a text field.
 
-Types text into the currently focused input field.
-
-```
+```bash
+phone-use phone clear
 phone-use phone type "<text>"
 ```
 
-| Argument | Type | Description |
-|---|---|---|
-| `text` | str | Text to type |
+#### `type`
 
-**When to use:**
-- Filling in a search box, form field, or chat message after tapping on it
-- Entering credentials (see security note below)
-- Typing a URL in a browser address bar
+Types text into the currently focused input field.
+
+```bash
+phone-use phone type "<text>"
+```
+
+**Use when:**
+- Filling forms
+- Typing search queries or URLs
+- Entering messages or short text content
 
 **Examples:**
+
 ```bash
-# Type a search query
 phone-use phone type "best coffee shops near me"
-
-# Type a URL
 phone-use phone type "https://example.com"
-
-# Type a multi-word name
 phone-use phone type "John Smith"
 ```
 
-**Workflow — always `tap` the field first:**
-```bash
-# 1. Focus the input field
-phone-use phone tap 540 600
+Recommended workflow:
 
-# 2. Type into it
+```bash
+phone-use phone tap 540 600
+phone-use phone clear
 phone-use phone type "hello world"
 ```
 
 **Best practices:**
-- Always `tap` the target input field before calling `type`. Text input is sent to whatever element currently has focus; if nothing is focused, the text is lost.
-- On Android, `type` automatically switches to ADB Keyboard and restores the original IME afterward. Do not interrupt the sequence.
-- On HarmonyOS, `type` uses the `uitest` text input directly — no IME switch needed.
-- Use `clear` before `type` when you need to replace existing content rather than append to it.
-- For multiline input (e.g. a chat message with line breaks), type each line and use the system enter key separately. The `\n` character is handled by the HDC backend natively but may not work as expected on ADB — compose the full text without newlines when possible.
-- Avoid putting credentials in shell history. Use environment variables or a secrets manager and pass them through a wrapper script.
+- Always focus the field first.
+- Use `clear` when replacing existing text.
+- Avoid putting secrets directly in shell history.
+- On Android, do not interrupt the temporary IME switch.
 
----
+#### `clear`
 
-### clear
+Clears the currently focused input field.
 
-Clears all text in the currently focused input field.
-
-```
+```bash
 phone-use phone clear
 ```
 
-**When to use:**
-- Resetting a search field before typing a new query
-- Clearing a form field that already has content
-- Removing text that `type` appended to instead of replacing
+**Use when:**
+- Resetting a search field
+- Replacing an existing value
+- Recovering from appended text
 
 **Examples:**
+
 ```bash
-# Clear and re-type a search field
 phone-use phone tap 540 200
 phone-use phone clear
 phone-use phone type "new search query"
 ```
 
 **Best practices:**
-- `clear` works on the focused field. If focus has shifted (e.g. a dropdown appeared after a tap), the clear may go to the wrong element. Always verify with a `screenshot` when in doubt.
-- On Android, `clear` sends `ADB_CLEAR_TEXT` broadcast. On iOS, it calls WDA's element clear endpoint. Both require an active focused element.
-
----
-
-### back
-
-Navigates back — presses the back button on Android/HarmonyOS or performs a left-edge swipe on iOS.
-
-```
-phone-use phone back [--delay SECONDS]
-```
-
-| Argument | Type | Description |
-|---|---|---|
-| `--delay` | float | Seconds to wait after the action |
-
-**When to use:**
-- Going back one screen in the navigation stack
-- Dismissing a dialog or bottom sheet
-- Closing a keyboard without confirming
-- Returning from a detail view to a list view
-
-**Examples:**
-```bash
-# Go back
-phone-use phone back
-
-# Go back and wait longer for the previous screen to load
-phone-use phone back --delay 2.0
-```
-
-**Best practices:**
-- Some apps override the back button to show "exit" confirmations — you may need two `back` calls to exit the app.
-- On iOS, the left-edge swipe gesture may not work in all apps that use custom navigation. If `back` has no effect, tap the on-screen back button using `tap` with the button's coordinates.
-- Pressing back from the root of an app typically returns to the home screen or triggers an exit dialog.
-
----
-
-### home
-
-Returns to the device's home screen.
-
-```
-phone-use phone home [--delay SECONDS]
-```
-
-| Argument | Type | Description |
-|---|---|---|
-| `--delay` | float | Seconds to wait after pressing home |
-
-**When to use:**
-- ALWAYS use this when starting a task
-- Returning to the launcher from any app
-- Resetting context before starting a new flow
-- Switching apps indirectly (home → tap another app icon)
-
-**Examples:**
-```bash
-# Go to home screen
-phone-use phone home
-
-# Go home and wait for launcher to load
-phone-use phone home --delay 1.5
-```
-
-**Best practices:**
-- To start a new task, use `home` to first reset the state of phone.
-- Prefer `home` over chaining multiple `back` calls when you want to get out of any app regardless of its navigation depth.
-- After `home`, use `launch` to open a specific app rather than tapping its icon by coordinate — icon positions vary across devices and launchers.
-
----
-
-### launch
-
-Launches an app by name using the device's package manager.
-
-```
-phone-use phone launch "<app_name>" [--delay SECONDS]
-```
-
-| Argument | Type | Description |
-|---|---|---|
-| `app_name` | str | App name as listed in the supported apps config |
-| `--delay` | float | Seconds to wait after launch (default: 1.0) |
-
-**When to use:**
-- Starting any session that involves a specific app
-- Returning to an app after going home or running another app
-- Opening a system app (Settings, Camera, Maps)
-
-**Examples:**
-```bash
-# Launch WeChat
-phone-use phone launch WeChat
-
-# Launch Settings and wait for it to load
-phone-use phone launch Settings --delay 2.0
-
-# Launch on HarmonyOS
-phone-use --device-type hdc phone launch 美团
-```
-
-**Finding supported app names:**
-```bash
-phone-use --list-apps
-phone-use --device-type hdc --list-apps
-phone-use --device-type ios --list-apps
-```
-
-**Best practices:**
-- App names are case-sensitive and must match the entries in the app config exactly. Run `--list-apps` to confirm the exact name.
-- Use `--delay 2.0` or higher for heavy apps (games, camera) that take longer to reach their initial screen.
-- If an app is already running in the foreground, `launch` typically brings it to the foreground without restarting it. If you need a fresh launch, use `back`/`home` first or handle the running-app state manually.
-- If `launch` returns an error, the app name is not in the supported list. Add it to the appropriate config file (`phone_agent/config/apps.py`, `apps_harmonyos.py`, or `apps_ios.py`).
-
----
-
-### screenshot
-
-Captures the current screen and saves it as a PNG file.
-
-```
-phone-use phone screenshot --output <path>
-```
-
-| Argument | Type | Description |
-|---|---|---|
-| `--output`, `-o` | str | File path to write the PNG (required) |
-
-**When to use:**
-- Inspecting the current screen state before deciding which coordinates to tap
-- Debugging a sequence — take a screenshot between steps to see what happened
-- Capturing evidence of a UI state
-- Measuring element positions before hard-coding coordinates
-
-**Examples:**
-```bash
-# Save to current directory
-phone-use phone screenshot --output screen.png
-
-# Short flag
-phone-use phone screenshot -o /tmp/before_tap.png
-
-# iOS screenshot
-phone-use --device-type ios phone screenshot --output ios_screen.png
-```
-
-**Best practices:**
-- Use `screenshot` to validate the visual phone state: confirm the right app is open, the UI finished loading, and the target is actually visible before you act.
-- Use descriptive output filenames when capturing multiple states: `before.png`, `after_tap.png`.
-- Screenshots are full-resolution PNGs. On high-density screens (3x), a 1080-wide logical view may produce a 3240-pixel PNG. The coordinates you pass to `tap`/`swipe` should always be in the device's **logical pixel** space (match what you see in `adb shell wm size`), not the physical PNG dimensions.
-- On Android, if a screenshot is all-black, the screen may be locked or showing a secure screen (e.g. banking app). Unlock the device or navigate away from the secure view first.
-
----
-
-### state
-
-Prints a structured overview of the current phone state using the native UI hierarchy. Without `--output`, it returns a simplified, agent-facing summary. With `--output`, it also saves the full raw state payload to a JSON file.
-
-```
-phone-use phone state [--output <path>]
-```
-
-| Argument | Type | Description |
-|---|---|---|
-| `--output`, `-o` | str | Optional file path to write the full state JSON |
-
-**When to use:**
-- Getting an overview of the current app before choosing coordinates
-- Inspecting native UI nodes, labels, ids, and bounds in a browser-like way
-- Debugging cases where a screenshot looks correct but the actionable element is unclear
-- Saving the full hierarchy for later analysis while keeping terminal output concise
-
-**Examples:**
-```bash
-# Print a summarized state view to stdout
-phone-use phone state
-
-# Save the full native state while still printing the simplified view
-phone-use phone state --output phone_state.json
-
-# iOS state inspection
-phone-use --device-type ios phone state --output ios_state.json
-```
-
-**How to read it:**
-- Think of `state` like a browser accessibility or DOM snapshot: it gives you an overview of the current app structure, notable nodes, and coordinates, instead of a rendered image.
-- The terminal output is intentionally simplified for quick inspection.
-- The optional output file preserves the full native tree in case you need more detail than the summarized view shows.
-
-**Best practices:**
-- Use `state` after `screenshot` when you need structure, not just pixels.
-- Use `screenshot` to validate what the user would see, and `state` to understand what the platform exposes as tappable or labeled elements.
-- On Android and iOS, `state` includes native bounds and coordinate data. HarmonyOS/HDC does not currently support this command.
-
----
-
-### current-app
-
-Prints the name of the currently active (foreground) app.
-
-```
-phone-use phone current-app
-```
-
-**When to use:**
-- Verifying which app is in the foreground before issuing actions
-- Debugging automation sequences where an unexpected app came to the front
-- Checking whether a `launch` command succeeded and the app is running
-
-**Examples:**
-```bash
-phone-use phone current-app
-# Current app: WeChat
-
-phone-use --device-type ios phone current-app
-# Current app: Safari
-```
-
-**Best practices:**
-- On Android, `current-app` parses `adb shell dumpsys window` and returns the focused package. On iOS it queries WDA's `activeAppInfo` endpoint. If the result is unexpected, follow up with `screenshot` to see the actual screen.
-- Use `current-app` at the start of a script to assert you're in the right app before doing destructive actions.
-
----
+- Make sure the correct field still has focus.
+- If focus may have changed, verify with `screenshot` first.
 
 ## Coordinate System
 
-All coordinates passed to `tap`, `double-tap`, `long-press`, and `swipe` are **absolute pixels** in the device's logical resolution.
+All coordinates passed to `tap`, `double-tap`, `long-press`, and `swipe` are absolute values in the device's logical resolution.
 
-**Finding your device's resolution:**
+Find the resolution:
+
 ```bash
 # Android / HarmonyOS
 adb shell wm size
-# → Physical size: 1080x2400
 
-# iOS — check in Settings > General > About, or use screenshot dimensions
+# iOS
 phone-use --device-type ios phone screenshot -o tmp.png
 python3 -c "from PIL import Image; img=Image.open('tmp.png'); print(img.size)"
 ```
 
-**iOS scale factor note:** WebDriverAgent operates in logical points (device-independent pixels). The `xctest` backend internally divides coordinates by a scale factor of 3, so pass raw pixel coordinates as you would for ADB and the backend handles the conversion.
-
-**Quick reference — common resolutions:**
+Quick reference:
 
 | Device class | Resolution | Center |
 |---|---|---|
-| Android 1080p | 1080 × 1920 | (540, 960) |
-| Android 1080p tall | 1080 × 2400 | (540, 1200) |
-| iPhone 14 Pro | 1179 × 2556 | (590, 1278) |
-| iPhone SE (3rd gen) | 750 × 1334 | (375, 667) |
+| Android 1080p | 1080 x 1920 | (540, 960) |
+| Android 1080p tall | 1080 x 2400 | (540, 1200) |
+| iPhone 14 Pro | 1179 x 2556 | (590, 1278) |
+| iPhone SE (3rd gen) | 750 x 1334 | (375, 667) |
 
----
+For iOS, pass pixel-style coordinates the same way you would for ADB; the backend handles scale conversion internally.
 
-## Best Practices
+## Common Workflows
 
-### Sequence design
-
-**Always verify before acting.** Take a `screenshot` before tapping anything, especially in a new flow or after a `launch`. An app's UI can vary based on state, account settings, or OS version.
-
-```bash
-phone-use phone launch WeChat
-phone-use phone screenshot -o state.png
-# inspect state.png to validate the visual state
-phone-use phone state --output state.json
-# inspect the summarized terminal output or the full state.json for element structure
-phone-use phone tap 540 200
-```
-
-**Use the two inspection tools together.**
-- `screenshot` tells you what the phone visually shows right now.
-- `state` tells you the current app structure in a browser-like overview, including notable native nodes and coordinates.
-- If the screenshot and state disagree, trust the screenshot for what is actually rendered and use the saved full state file to debug why the native hierarchy is incomplete or stale.
-
-**Add delays generously at first.** Network-dependent screens, animations, and transitions take time. Use `--delay 2.0` while developing; tune down to `--delay 0.5` once the sequence is stable.
-
-**Use `home` to reset.** When a sequence fails partway through, `home` returns to a known state more reliably than backtracking with `back`.
+### Starting a Stable Flow
 
 ```bash
 phone-use phone home
-phone-use phone launch <app>
-# ...retry the sequence
+phone-use phone launch WeChat --delay 2.0
+phone-use phone screenshot -o step_01_open.png
+phone-use phone state --output step_01_open.json
 ```
 
-### Reliability
-
-**Don't hard-code coordinates without verifying.** Screen layouts change with OS updates, font size settings, and app versions. Re-run `screenshot`, then check `state` if you need a structural overview of the current app.
-
-**Handle text input carefully.** Always `tap` the field, then `clear`, then `type`. Skipping `clear` will append to whatever is already in the field.
+### Searching in an App
 
 ```bash
-phone-use phone tap 540 600     # focus the field
-phone-use phone clear           # remove existing content
-phone-use phone type "my text"  # type fresh content
+phone-use phone tap 540 180
+phone-use phone clear
+phone-use phone type "coffee"
+phone-use phone screenshot -o step_02_search.png
 ```
 
-**Prefer `launch` over tapping app icons.** Icon positions shift when apps are installed or the launcher is reorganized. `launch` uses the package name and is stable.
-
-### Scripting
-
-**Chain commands in a shell script for repeatable flows:**
+### Recovering from a Bad State
 
 ```bash
-#!/bin/bash
-set -e
-
-DEVICE_FLAGS="--device-type adb"
-
-phone-use $DEVICE_FLAGS phone home
-phone-use $DEVICE_FLAGS phone launch Maps
-sleep 2
-phone-use $DEVICE_FLAGS phone tap 540 180     # tap search bar
-phone-use $DEVICE_FLAGS phone type "coffee"
-phone-use $DEVICE_FLAGS phone screenshot -o result.png
+phone-use phone current-app
+phone-use phone back --delay 1.0
+phone-use phone home
+phone-use phone launch Maps --delay 2.0
 ```
 
-**Use `set -e`** so the script stops on the first failed command rather than proceeding into an undefined state.
-
-**Capture intermediate screenshots** for debugging. Name them with a step number or timestamp:
+### Multi-device Targeting
 
 ```bash
-phone-use phone screenshot -o "step_01_home.png"
-phone-use phone launch WeChat
-phone-use phone screenshot -o "step_02_wechat_open.png"
-```
-
-### Multi-device
-
-When multiple devices are connected, always specify `--device-id` to avoid ambiguity:
-
-```bash
-# List devices first
 phone-use --list-devices
-
-# Then pin the target device
 phone-use --device-id R58M12345 phone screenshot -o screen.png
 ```
 
-### iOS-specific
+## Tips
 
-- WDA must be running before any `phone` command. Check with `phone-use --device-type ios --wda-status`.
-- Port forwarding is required for USB-connected devices: `iproxy 8100 8100`.
-- iOS does not have a hardware back button. The `back` action performs a left-edge swipe. For apps that don't support this gesture, `tap` the on-screen back arrow directly.
-- `type` on iOS sends keystrokes through WDA at a configurable frequency. If characters are dropped, the field may be updating (e.g. autocomplete) faster than input arrives — add a `--delay` before typing.
+1. Always inspect before acting: use `screenshot` first, then `state` when you need structure.
+2. Start with generous delays like `--delay 2.0`, then tighten after the flow is stable.
+3. Prefer `launch` over tapping app icons.
+4. Use `home` as the fastest reset path when a sequence fails.
+5. Capture intermediate screenshots during scripting so failures are easier to debug.
+6. When multiple devices are attached, always pin `--device-id`.
+
+## Troubleshooting
+
+**No device found?**
+
+```bash
+phone-use --list-devices
+```
+
+**iOS commands failing?**
+
+```bash
+phone-use --device-type ios --wda-status
+iproxy 8100 8100
+```
+
+**Tap or swipe has no effect?**
+
+```bash
+phone-use phone screenshot -o current.png
+phone-use phone state --output current.json
+```
+
+The UI may still be loading, the coordinates may be wrong, or a modal may be covering the target.
+
+**Text went to the wrong place?**
+
+Tap the field again, clear it, and retry:
+
+```bash
+phone-use phone tap 540 600
+phone-use phone clear
+phone-use phone type "retry text"
+```
+
+## iOS Notes
+
+- WebDriverAgent must already be running.
+- USB-connected devices usually need port forwarding through `iproxy 8100 8100`.
+- `back` is implemented as a left-edge swipe and may not work in every custom app.
+- If typed characters drop, add a short wait before calling `type`.

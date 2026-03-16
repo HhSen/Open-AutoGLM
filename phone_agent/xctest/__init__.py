@@ -13,6 +13,7 @@ from phone_agent.xctest.device import (
     get_current_app,
     get_ui_tree,
     home,
+    list_installed_apps,
     launch_app,
     long_press,
     swipe,
@@ -33,6 +34,7 @@ __all__ = [
     # Device control
     "get_current_app",
     "get_ui_tree",
+    "list_installed_apps",
     "tap",
     "swipe",
     "back",

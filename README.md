@@ -316,11 +316,11 @@ python main.py --apikey sk-xxxxx
 # 使用英文 system prompt
 python main.py --lang en --base-url http://localhost:8000/v1 "Open Chrome browser"
 
-# 列出支持的应用（Android）
-python main.py --list-apps
+# 列出已安装应用（Android）
+python main.py phone list-apps
 
-# 列出支持的应用（鸿蒙）
-python main.py --device-type hdc --list-apps
+# 列出已安装应用（鸿蒙）
+python main.py --device-type hdc phone list-apps
 ```
 
 ### 直接控制手机 CLI（`phone-use`）
@@ -632,7 +632,7 @@ Phone Agent 支持 50+ 款主流中文应用：
 | 生活服务 | 大众点评、高德地图、百度地图  |
 | 内容社区 | 小红书、知乎、豆瓣       |
 
-运行 `python main.py --list-apps` 查看完整列表。
+运行 `python main.py phone list-apps` 查看已安装应用列表；如果配置表中有映射，会优先显示人类可读名称。
 
 ### 鸿蒙应用
 
@@ -651,7 +651,7 @@ Phone Agent 支持 60+ 款鸿蒙原生应用和系统应用：
 | 系统应用    | 浏览器、日历、相机、时钟、云空间、文件管理器、相册、联系人、短信、设置等   |
 | 华为服务    | 应用市场、音乐、视频、阅读、主题、天气                     |
 
-运行 `python main.py --device-type hdc --list-apps` 查看完整列表。
+运行 `python main.py --device-type hdc phone list-apps` 查看已安装应用列表；如果配置表中有映射，会优先显示人类可读名称。
 
 ## 可用操作
 
@@ -1023,8 +1023,8 @@ python main.py --base-url {MODEL_URL} --model "autoglm-phone-9b"
 # 运行 Agent(单次任务)
 python main.py --base-url {MODEL_URL} --model "autoglm-phone-9b" "你的任务描述"
 
-# 查看支持的应用列表
-python main.py --list-apps
+# 查看已安装的应用列表
+python main.py phone list-apps
 ```
 
 ---

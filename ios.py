@@ -23,7 +23,6 @@ from urllib.parse import urlparse
 from openai import OpenAI
 
 from phone_agent.agent_ios import IOSAgentConfig, IOSPhoneAgent
-from phone_agent.config.apps_ios import list_supported_apps
 from phone_agent.model import ModelConfig
 from phone_agent.xctest import XCTestConnection, list_devices
 
@@ -99,9 +98,7 @@ def check_system_requirements(wda_url: str = "http://localhost:8100") -> bool:
             print("     4. Or connect via WiFi using device IP")
             all_passed = False
         else:
-            device_names = [
-                d.device_name or d.device_id[:8] + "..." for d in devices
-            ]
+            device_names = [d.device_name or d.device_id[:8] + "..." for d in devices]
             print(f"✅ OK ({len(devices)} device(s): {', '.join(device_names)})")
     except Exception as e:
         print("❌ FAILED")
@@ -272,9 +269,6 @@ Examples:
     # Check device pairing status
     python ios.py --pair
 
-    # List supported apps
-    python ios.py --list-apps
-
     # Run a specific task
     python ios.py "Open Safari and search for iPhone tips"
         """,
@@ -326,7 +320,9 @@ Examples:
     )
 
     parser.add_argument(
-        "--list-devices", action="store_true", help="List connected iOS devices and exit"
+        "--list-devices",
+        action="store_true",
+        help="List connected iOS devices and exit",
     )
 
     parser.add_argument(
@@ -344,10 +340,6 @@ Examples:
     # Other options
     parser.add_argument(
         "--quiet", "-q", action="store_true", help="Suppress verbose output"
-    )
-
-    parser.add_argument(
-        "--list-apps", action="store_true", help="List supported apps and exit"
     )
 
     parser.add_argument(
@@ -447,19 +439,6 @@ def main():
     """Main entry point."""
     args = parse_args()
 
-    # Handle --list-apps (no system check needed)
-    if args.list_apps:
-        print("Supported iOS apps:")
-        print("\nNote: For iOS apps, Bundle IDs are configured in:")
-        print("  phone_agent/config/apps_ios.py")
-        print("\nCurrently configured apps:")
-        for app in sorted(list_supported_apps()):
-            print(f"  - {app}")
-        print(
-            "\nTo add iOS apps, find the Bundle ID and add to APP_PACKAGES_IOS dictionary."
-        )
-        return
-
     # Handle device commands (these may need partial system checks)
     if handle_device_commands(args):
         return
@@ -474,9 +453,7 @@ def main():
 
     # Create configurations
     model_config = ModelConfig(
-        base_url=args.base_url,
-        model_name=args.model,
-        api_key=args.api_key
+        base_url=args.base_url, model_name=args.model, api_key=args.api_key
     )
 
     agent_config = IOSAgentConfig(
