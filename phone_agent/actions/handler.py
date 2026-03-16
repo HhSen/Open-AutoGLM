@@ -433,7 +433,7 @@ def finish(**kwargs) -> dict[str, Any]:
 
 
 def summarize_ui_tree_for_model(
-    ui_tree: dict[str, Any], max_nodes: int = 120
+    ui_tree: dict[str, Any], max_nodes: int = 12
 ) -> dict[str, Any]:
     """Trim large UI-tree payloads before sending them back to the model."""
     nodes = ui_tree.get("nodes", [])

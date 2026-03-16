@@ -392,21 +392,21 @@ def launch_app(
     Launch an app by name.
 
     Args:
-        app_name: The app name (must be in APP_PACKAGES).
+        app_name: The app label from APP_PACKAGES or a raw Android package name.
         device_id: Optional ADB device ID.
         delay: Delay in seconds after launching. If None, uses configured default.
 
     Returns:
-        True if app was launched, False if app not found.
+        True if the launch command was issued, False if the input is empty.
     """
     if delay is None:
         delay = TIMING_CONFIG.device.default_launch_delay
 
-    if app_name not in APP_PACKAGES:
+    package = APP_PACKAGES.get(app_name, app_name.strip())
+    if not package:
         return False
 
     adb_prefix = _get_adb_prefix(device_id)
-    package = APP_PACKAGES[app_name]
 
     _run_adb_command(
         adb_prefix,
@@ -419,7 +419,7 @@ def launch_app(
             "android.intent.category.LAUNCHER",
             "1",
         ],
-        f"launch {app_name}",
+        f"launch {package}",
     )
     time.sleep(delay)
     return True

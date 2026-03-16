@@ -178,6 +178,28 @@ phone-use --device-type hdc phone list-apps
 phone-use --device-type ios phone list-apps
 ```
 
+Add friendly names for `list-apps` and `launch`:
+
+```python
+# Android: phone_agent/config/apps.py
+APP_PACKAGES["My App"] = "com.example.myapp"
+
+# HarmonyOS: phone_agent/config/apps_harmonyos.py
+APP_PACKAGES["My App"] = "com.example.myapp"
+
+# iOS: phone_agent/config/apps_ios.py
+APP_PACKAGES_IOS["My App"] = "com.example.myapp"
+```
+
+After adding the mapping, `phone-use phone list-apps` will show `My App` instead of only the raw package or bundle id when that app is installed on the device, and `phone-use phone launch "My App"` will work with the same name.
+
+For HarmonyOS, add an ability override too when the app does not start with the default `EntryAbility`:
+
+```python
+# phone_agent/config/apps_harmonyos.py
+APP_ABILITIES["com.example.myapp"] = "MainAbility"
+```
+
 **Best practices:**
 - App names are case-sensitive.
 - Use longer delays for heavy apps.

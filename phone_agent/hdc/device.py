@@ -310,23 +310,21 @@ def launch_app(
     Launch an app by name.
 
     Args:
-        app_name: The app name (must be in APP_PACKAGES).
+        app_name: The app label from APP_PACKAGES or a raw HarmonyOS bundle name.
         device_id: Optional HDC device ID.
         delay: Delay in seconds after launching. If None, uses configured default.
 
     Returns:
-        True if app was launched, False if app not found.
+        True if the launch command was issued, False if the input is empty.
     """
     if delay is None:
         delay = TIMING_CONFIG.device.default_launch_delay
 
-    if app_name not in APP_PACKAGES:
-        print(f"[HDC] App '{app_name}' not found in HarmonyOS app list")
-        print(f"[HDC] Available apps: {', '.join(sorted(APP_PACKAGES.keys())[:10])}...")
+    bundle = APP_PACKAGES.get(app_name, app_name.strip())
+    if not bundle:
         return False
 
     hdc_prefix = _get_hdc_prefix(device_id)
-    bundle = APP_PACKAGES[app_name]
 
     # Get the ability name for this bundle
     # Default to "EntryAbility" if not specified in APP_ABILITIES
@@ -345,7 +343,7 @@ def launch_app(
             "-a",
             ability,
         ],
-        f"launch {app_name}",
+        f"launch {bundle}",
         capture_output=True,
     )
     time.sleep(delay)

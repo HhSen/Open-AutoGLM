@@ -2,7 +2,6 @@
 
 import base64
 import subprocess
-from typing import Optional
 
 
 def _run_adb_command(
@@ -28,6 +27,9 @@ def type_text(text: str, device_id: str | None = None) -> None:
         Requires ADB Keyboard to be installed on the device.
         See: https://github.com/nicnocquee/AdbKeyboard
     """
+    if text == "":
+        return
+
     adb_prefix = _get_adb_prefix(device_id)
     encoded_text = base64.b64encode(text.encode("utf-8")).decode("utf-8")
 
@@ -90,9 +92,6 @@ def detect_and_set_adb_keyboard(device_id: str | None = None) -> str:
             ["shell", "ime", "set", "com.android.adbkeyboard/.AdbIME"],
             "set ADB keyboard",
         )
-
-    # Warm up the keyboard
-    type_text("", device_id)
 
     return current_ime
 

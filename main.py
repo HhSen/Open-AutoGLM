@@ -1009,6 +1009,100 @@ def run_direct_phone(args: argparse.Namespace) -> None:
         if note:
             print(f"\nNote: {note}")
 
+    def _run_tool_capture(cmd: list[str], timeout: int = 5) -> str | None:
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=timeout,
+            )
+        except Exception:
+            return None
+
+        if result.returncode != 0:
+            return None
+
+        return result.stdout.strip() or None
+
+    def _parse_prefixed_value(output: str | None, prefix: str) -> str | None:
+        if not output:
+            return None
+
+        for line in output.splitlines():
+            line = line.strip()
+            if line.startswith(prefix):
+                return line.split(":", 1)[1].strip()
+
+        return None
+
+    def _get_android_device_info() -> dict[str, str]:
+        cmd = ["adb"]
+        if device_id:
+            cmd.extend(["-s", device_id])
+
+        info: dict[str, str] = {}
+
+        model = _run_tool_capture(cmd + ["shell", "getprop", "ro.product.model"])
+        manufacturer = _run_tool_capture(
+            cmd + ["shell", "getprop", "ro.product.manufacturer"]
+        )
+        android_version = _run_tool_capture(
+            cmd + ["shell", "getprop", "ro.build.version.release"]
+        )
+        physical_size = _parse_prefixed_value(
+            _run_tool_capture(cmd + ["shell", "wm", "size"]), "Physical size"
+        )
+        density = _parse_prefixed_value(
+            _run_tool_capture(cmd + ["shell", "wm", "density"]), "Physical density"
+        )
+
+        if manufacturer and model:
+            info["Device"] = f"{manufacturer} {model}"
+        elif model:
+            info["Device"] = model
+
+        if android_version:
+            info["Android version"] = android_version
+        if physical_size:
+            info["Physical size"] = physical_size
+        if density:
+            info["Physical density"] = density
+
+        return info
+
+    def _get_ios_device_info(
+        shot_width: int | None = None, shot_height: int | None = None
+    ) -> dict[str, str]:
+        from phone_agent.xctest.device import get_screen_size
+
+        info: dict[str, str] = {}
+        device_info = conn.get_device_info(device_id=device_id)
+
+        if device_info:
+            if device_info.device_name:
+                info["Device"] = device_info.device_name
+            if device_info.model:
+                info["Model"] = device_info.model
+            if device_info.ios_version:
+                info["iOS version"] = device_info.ios_version
+
+        if shot_width and shot_height:
+            info["Physical size"] = f"{shot_width}x{shot_height}"
+
+        try:
+            logical_width, logical_height = get_screen_size(
+                wda_url=wda_url, session_id=session_id
+            )
+        except Exception:
+            logical_width = logical_height = None
+
+        if logical_width and logical_height:
+            info["Logical size"] = f"{logical_width}x{logical_height}"
+
+        return info
+
     # ------------------------------------------------------------------ #
     # iOS — delegate everything through xctest module + WDA session       #
     # ------------------------------------------------------------------ #
@@ -1153,7 +1247,7 @@ def run_direct_phone(args: argparse.Namespace) -> None:
                 else:
                     raise ValueError(
                         f"Could not launch app '{args.app_name}'. "
-                        "Run 'python main.py --device-type ios phone list-apps' to see supported apps."
+                        "Run 'python main.py --device-type ios phone list-apps' to inspect installed apps, or pass a known label from the app map."
                     )
 
             elif action == "screenshot":
@@ -1205,9 +1299,11 @@ def run_direct_phone(args: argparse.Namespace) -> None:
                     screen_width=shot.width,
                     screen_height=shot.height,
                 )
+                state["device_info"] = _get_ios_device_info(shot.width, shot.height)
                 _print_or_save_state(state, args.output)
                 action_log["params"] = {"output": args.output}
                 action_log["result"] = {
+                    "device_info": state.get("device_info"),
                     "node_count": state.get("node_count"),
                     "output": os.path.abspath(args.output) if args.output else None,
                 }
@@ -1356,7 +1452,7 @@ def run_direct_phone(args: argparse.Namespace) -> None:
                 dt = args.device_type
                 raise ValueError(
                     f"Could not launch app '{args.app_name}'. "
-                    f"Run 'python main.py --device-type {dt} phone list-apps' to see supported apps."
+                    f"Run 'python main.py --device-type {dt} phone list-apps' to inspect installed apps, or pass a known label from the app map."
                 )
 
         elif action == "screenshot":
@@ -1403,9 +1499,12 @@ def run_direct_phone(args: argparse.Namespace) -> None:
                 screen_width=shot.width,
                 screen_height=shot.height,
             )
+            if device_type == DeviceType.ADB:
+                state["device_info"] = _get_android_device_info()
             _print_or_save_state(state, args.output)
             action_log["params"] = {"output": args.output}
             action_log["result"] = {
+                "device_info": state.get("device_info"),
                 "node_count": state.get("node_count"),
                 "output": os.path.abspath(args.output) if args.output else None,
             }
@@ -1431,6 +1530,7 @@ def run_direct_phone(args: argparse.Namespace) -> None:
 def _print_or_save_state(state: dict, output_path: str | None) -> None:
     """Print the summarized phone state and optionally save the full payload."""
     summarized_state = summarize_ui_tree_for_model(state)
+    device_info = summarized_state.pop("device_info", None)
     payload = json.dumps(summarized_state, ensure_ascii=False, indent=2)
 
     if output_path:
@@ -1438,6 +1538,12 @@ def _print_or_save_state(state: dict, output_path: str | None) -> None:
             file_obj.write(json.dumps(state, ensure_ascii=False, indent=2))
             file_obj.write("\n")
         print(f"Full state saved to: {output_path}")
+
+    if isinstance(device_info, dict) and device_info:
+        print("Device info:")
+        for label, value in device_info.items():
+            print(f"{label}: {value}")
+        print()
 
     print(payload)
 

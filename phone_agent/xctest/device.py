@@ -557,26 +557,26 @@ def launch_app(
     Launch an app by name.
 
     Args:
-        app_name: The app name (must be in APP_PACKAGES).
+        app_name: The app label from APP_PACKAGES or a raw iOS bundle id.
         wda_url: WebDriverAgent URL.
         session_id: Optional WDA session ID.
         delay: Delay in seconds after launching.
 
     Returns:
-        True if app was launched, False if app not found.
+        True if the launch command was issued, False if the input is empty.
     """
-    if app_name not in APP_PACKAGES:
+    bundle_id = APP_PACKAGES.get(app_name, app_name.strip())
+    if not bundle_id:
         return False
 
     requests = _require_requests()
 
-    bundle_id = APP_PACKAGES[app_name]
     url = _get_wda_session_url(wda_url, session_id, "wda/apps/launch")
 
     response = requests.post(
         url, json={"bundleId": bundle_id}, timeout=10, verify=False
     )
-    _ensure_wda_response_ok(response, f"launch {app_name}")
+    _ensure_wda_response_ok(response, f"launch {bundle_id}")
     time.sleep(delay)
     return True
 

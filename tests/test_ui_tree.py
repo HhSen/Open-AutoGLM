@@ -100,6 +100,10 @@ def test_summarize_ui_tree_prioritizes_labeled_interactive_nodes():
 def test_print_or_save_state_prints_summary_and_saves_full_tree(tmp_path, capsys):
     state = {
         "platform": "adb",
+        "device_info": {
+            "Device": "Google Pixel 8",
+            "Physical size": "1200x2670",
+        },
         "nodes": [
             {"type": "TextView", "text": f"Label {index}", "clickable": False}
             for index in range(130)
@@ -111,9 +115,12 @@ def test_print_or_save_state_prints_summary_and_saves_full_tree(tmp_path, capsys
 
     stdout = capsys.readouterr().out
     assert "Full state saved to:" in stdout
+    assert "Device info:" in stdout
+    assert "Physical size: 1200x2670" in stdout
     assert '"node_count": 130' in stdout
     assert '"truncated": true' in stdout
 
     saved_payload = output_path.read_text(encoding="utf-8")
     assert '"platform": "adb"' in saved_payload
+    assert '"Physical size": "1200x2670"' in saved_payload
     assert saved_payload.count('"type": "TextView"') == 130

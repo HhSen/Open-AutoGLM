@@ -6,6 +6,9 @@ class _Response:
         self.status_code = status_code
         self._payload = payload
 
+    def raise_for_status(self):
+        return None
+
     def json(self):
         return self._payload
 
