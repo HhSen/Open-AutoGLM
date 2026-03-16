@@ -18,7 +18,7 @@ def test_get_current_app_returns_bundle_id(monkeypatch):
 
     monkeypatch.setitem(__import__("sys").modules, "requests", _Requests)
 
-    assert get_current_app() == "com.apple.mobilesafari"
+    assert get_current_app() == "Safari"
 
 
 def test_get_current_app_returns_system_home_without_bundle(monkeypatch):

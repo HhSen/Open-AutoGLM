@@ -6,7 +6,7 @@ import subprocess
 import time
 from typing import List, Optional, Tuple
 
-from phone_agent.config.apps import APP_PACKAGES
+from phone_agent.config.apps import APP_PACKAGES, get_app_name
 from phone_agent.config.timing import TIMING_CONFIG
 
 
@@ -33,7 +33,10 @@ def get_current_app(device_id: str | None = None) -> str:
         raise ValueError("No output from dumpsys window")
 
     package_name = _extract_focused_package(output)
-    return package_name or "System Home"
+    if not package_name:
+        return "System Home"
+
+    return get_app_name(package_name) or package_name
 
 
 def _extract_focused_package(output: str) -> str | None:

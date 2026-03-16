@@ -14,7 +14,7 @@ def test_get_current_app_returns_known_app_name(monkeypatch):
         ),
     )
 
-    assert get_current_app() == "com.google.android.youtube"
+    assert get_current_app() == "YouTube"
 
 
 def test_get_current_app_returns_package_for_unknown_app(monkeypatch):

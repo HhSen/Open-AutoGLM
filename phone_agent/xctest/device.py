@@ -4,6 +4,8 @@ import subprocess
 import time
 from typing import Optional
 
+from phone_agent.config.apps_ios import APP_PACKAGES_IOS as APP_PACKAGES, get_app_name
+
 SCALE_FACTOR = 3  # 3 for most modern iPhone
 
 
@@ -52,8 +54,10 @@ def get_current_app(
             data = response.json()
             value = data.get("value", {})
             bundle_id = value.get("bundleId", "")
+            if not bundle_id:
+                return "System Home"
 
-            return bundle_id or "System Home"
+            return get_app_name(bundle_id) or bundle_id
 
     except ImportError:
         print("Error: requests library required. Install: pip install requests")

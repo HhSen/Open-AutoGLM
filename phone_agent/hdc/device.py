@@ -6,7 +6,7 @@ import subprocess
 import time
 from typing import List, Optional, Tuple
 
-from phone_agent.config.apps_harmonyos import APP_ABILITIES, APP_PACKAGES
+from phone_agent.config.apps_harmonyos import APP_ABILITIES, APP_PACKAGES, get_app_name
 from phone_agent.config.timing import TIMING_CONFIG
 from phone_agent.hdc.connection import _run_hdc_command
 
@@ -66,7 +66,10 @@ def get_current_app(device_id: str | None = None) -> str:
         if "Mission ID" in line:
             current_bundle = None
 
-    return foreground_bundle or "System Home"
+    if not foreground_bundle:
+        return "System Home"
+
+    return get_app_name(foreground_bundle) or foreground_bundle
 
 
 def tap(
