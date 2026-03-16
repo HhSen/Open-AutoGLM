@@ -1,6 +1,7 @@
 """Device control utilities for Android automation."""
 
 import os
+import re
 import subprocess
 import time
 from typing import List, Optional, Tuple
@@ -17,25 +18,51 @@ def get_current_app(device_id: str | None = None) -> str:
         device_id: Optional ADB device ID for multi-device setups.
 
     Returns:
-        The app name if recognized, otherwise "System Home".
+        The focused package name when available.
     """
     adb_prefix = _get_adb_prefix(device_id)
 
     result = subprocess.run(
-        adb_prefix + ["shell", "dumpsys", "window"], capture_output=True, text=True, encoding="utf-8"
+        adb_prefix + ["shell", "dumpsys", "window"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
     )
     output = result.stdout
     if not output:
         raise ValueError("No output from dumpsys window")
 
-    # Parse window focus info
-    for line in output.split("\n"):
-        if "mCurrentFocus" in line or "mFocusedApp" in line:
-            for app_name, package in APP_PACKAGES.items():
-                if package in line:
-                    return app_name
+    package_name = _extract_focused_package(output)
+    return package_name or "System Home"
 
-    return "System Home"
+
+def _extract_focused_package(output: str) -> str | None:
+    """Extract the currently focused package from dumpsys window output."""
+    focus_markers = ("mFocusedApp", "mCurrentFocus")
+
+    for marker in focus_markers:
+        for line in output.splitlines():
+            if marker not in line:
+                continue
+
+            package_name = _extract_package_name(line)
+            if package_name:
+                return package_name
+
+    return None
+
+
+def _extract_package_name(line: str) -> str | None:
+    """Extract a package name from a single dumpsys output line."""
+    match = re.search(r"\s([A-Za-z0-9_.]+)/(?:[A-Za-z0-9_.$]+)", line)
+    if match:
+        return match.group(1)
+
+    match = re.search(r"\s([A-Za-z0-9_.]+)\}", line)
+    if match:
+        return match.group(1)
+
+    return None
 
 
 def tap(

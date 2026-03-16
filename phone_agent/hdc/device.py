@@ -1,6 +1,7 @@
 """Device control utilities for HarmonyOS automation."""
 
 import os
+import re
 import subprocess
 import time
 from typing import List, Optional, Tuple
@@ -8,17 +9,17 @@ from typing import List, Optional, Tuple
 from phone_agent.config.apps_harmonyos import APP_ABILITIES, APP_PACKAGES
 from phone_agent.config.timing import TIMING_CONFIG
 from phone_agent.hdc.connection import _run_hdc_command
-import re
+
 
 def get_current_app(device_id: str | None = None) -> str:
     """
-    Get the currently focused app name.
+    Get the currently focused app bundle name.
 
     Args:
         device_id: Optional HDC device ID for multi-device setups.
 
     Returns:
-        The app name if recognized, otherwise "System Home".
+        The focused bundle name when available.
     """
     hdc_prefix = _get_hdc_prefix(device_id)
 
@@ -27,7 +28,7 @@ def get_current_app(device_id: str | None = None) -> str:
         hdc_prefix + ["shell", "aa", "dump", "-l"],
         capture_output=True,
         text=True,
-        encoding="utf-8"
+        encoding="utf-8",
     )
     output = result.stdout
     # print(output)
@@ -51,7 +52,7 @@ def get_current_app(device_id: str | None = None) -> str:
     for line in lines:
         # Track the current mission's bundle name
         if "app name [" in line:
-            match = re.search(r'\[([^\]]+)\]', line)
+            match = re.search(r"\[([^\]]+)\]", line)
             if match:
                 current_bundle = match.group(1)
 
@@ -65,16 +66,7 @@ def get_current_app(device_id: str | None = None) -> str:
         if "Mission ID" in line:
             current_bundle = None
 
-    # Match against known apps
-    if foreground_bundle:
-        for app_name, package in APP_PACKAGES.items():
-            if package == foreground_bundle:
-                return app_name
-        # If bundle is found but not in our known apps, return the bundle name
-        print(f'Bundle is found but not in our known apps: {foreground_bundle}')
-        return foreground_bundle
-    print(f'No bundle is found')
-    return "System Home"
+    return foreground_bundle or "System Home"
 
 
 def tap(
@@ -97,7 +89,7 @@ def tap(
     # HarmonyOS uses uitest uiInput click
     _run_hdc_command(
         hdc_prefix + ["shell", "uitest", "uiInput", "click", str(x), str(y)],
-        capture_output=True
+        capture_output=True,
     )
     time.sleep(delay)
 
@@ -122,7 +114,7 @@ def double_tap(
     # HarmonyOS uses uitest uiInput doubleClick
     _run_hdc_command(
         hdc_prefix + ["shell", "uitest", "uiInput", "doubleClick", str(x), str(y)],
-        capture_output=True
+        capture_output=True,
     )
     time.sleep(delay)
 
@@ -226,7 +218,7 @@ def back(device_id: str | None = None, delay: float | None = None) -> None:
     # HarmonyOS uses uitest uiInput keyEvent Back
     _run_hdc_command(
         hdc_prefix + ["shell", "uitest", "uiInput", "keyEvent", "Back"],
-        capture_output=True
+        capture_output=True,
     )
     time.sleep(delay)
 
@@ -247,7 +239,7 @@ def home(device_id: str | None = None, delay: float | None = None) -> None:
     # HarmonyOS uses uitest uiInput keyEvent Home
     _run_hdc_command(
         hdc_prefix + ["shell", "uitest", "uiInput", "keyEvent", "Home"],
-        capture_output=True
+        capture_output=True,
     )
     time.sleep(delay)
 
@@ -305,6 +297,7 @@ def _get_hdc_prefix(device_id: str | None) -> list:
     if device_id:
         return ["hdc", "-t", device_id]
     return ["hdc"]
+
 
 if __name__ == "__main__":
     print(get_current_app())

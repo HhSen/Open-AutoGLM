@@ -183,6 +183,9 @@ APP_PACKAGES: dict[str, str] = {
     "VLC": "org.videolan.vlc",
     "WeChat": "com.tencent.mm",
     "wechat": "com.tencent.mm",
+    "YouTube": "com.google.android.youtube",
+    "Youtube": "com.google.android.youtube",
+    "youtube": "com.google.android.youtube",
     "Whatsapp": "com.whatsapp",
     "WhatsApp": "com.whatsapp",
 }

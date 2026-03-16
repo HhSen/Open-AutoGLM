@@ -2,12 +2,14 @@
 # install.sh — one-time setup for phone-use CLI
 #
 # Usage:
-#   ./install.sh            # global install (recommended)
+#   ./install.sh            # global editable install (recommended)
 #   ./install.sh --local    # install into the current Python environment
 #   ./install.sh --dev      # local editable install with dev dependencies
 #   ./install.sh --global   # explicit global install
 #
 # After this runs, `phone-use` is available on your PATH.
+# In global mode with uv/pip, the install is editable so the CLI tracks this
+# repository's current source instead of a cached snapshot.
 
 set -e
 
@@ -46,8 +48,8 @@ cd "$SCRIPT_DIR"
 
 if [[ "$INSTALLER" == "uv" ]]; then
     if [[ "$MODE" == "global" ]]; then
-        echo "==> Installing phone-use globally with uv..."
-        uv tool install --force "$SCRIPT_DIR"
+        echo "==> Installing phone-use globally with uv (editable, tracks repo changes)..."
+        uv tool install --force --editable "$SCRIPT_DIR"
     elif [[ $DEV -eq 1 ]]; then
         echo "==> Installing package + dev dependencies locally with uv..."
         uv pip install -e ".[dev]"
@@ -57,8 +59,8 @@ if [[ "$INSTALLER" == "uv" ]]; then
     fi
 else
     if [[ "$MODE" == "global" ]]; then
-        echo "==> Installing phone-use globally with pip --user..."
-        pip3 install --user "$SCRIPT_DIR"
+        echo "==> Installing phone-use globally with pip --user (editable, tracks repo changes)..."
+        pip3 install --user -e "$SCRIPT_DIR"
     elif [[ $DEV -eq 1 ]]; then
         echo "==> Installing package + dev dependencies locally with pip..."
         pip3 install -e ".[dev]"
@@ -70,34 +72,46 @@ fi
 
 # ── Verify the entry point ────────────────────────────────────────────────────
 echo
-if command -v phone-use &>/dev/null; then
-    echo "==> phone-use installed at: $(which phone-use)"
-else
-    # Entry point may not be on PATH yet — check common locations
-    VENV_BIN=""
-    if [[ -f "$HOME/.local/bin/phone-use" ]]; then
-        VENV_BIN="$HOME/.local/bin"
-    elif [[ -f "$SCRIPT_DIR/.venv/bin/phone-use" ]]; then
-        VENV_BIN="$SCRIPT_DIR/.venv/bin"
-    fi
+ACTIVE_BIN="$(command -v phone-use 2>/dev/null || true)"
+GLOBAL_BIN=""
+LOCAL_BIN=""
 
-    if [[ -n "$VENV_BIN" ]]; then
-        echo "==> phone-use installed at: $VENV_BIN/phone-use"
-        echo
-        echo "    It is not on your PATH yet. Add it:"
-        echo
-        if [[ "$VENV_BIN" == "$HOME/.local/bin" ]]; then
-            echo "      export PATH=\"$HOME/.local/bin:\$PATH\""
-            echo "      # Add that line to your ~/.zshrc or ~/.bashrc to make it permanent."
-        else
-            echo "      # activate the project venv:"
-            echo "      source $SCRIPT_DIR/.venv/bin/activate"
-        fi
-    else
-        echo "WARNING: phone-use was not found after installation."
-        echo "  If you used global install, add ~/.local/bin to PATH."
-        echo "  If you used local install, activate: source $SCRIPT_DIR/.venv/bin/activate"
+if [[ -f "$HOME/.local/bin/phone-use" ]]; then
+    GLOBAL_BIN="$HOME/.local/bin/phone-use"
+fi
+
+if [[ -f "$SCRIPT_DIR/.venv/bin/phone-use" ]]; then
+    LOCAL_BIN="$SCRIPT_DIR/.venv/bin/phone-use"
+fi
+
+if [[ "$MODE" == "global" && -n "$GLOBAL_BIN" ]]; then
+    echo "==> Global phone-use installed at: $GLOBAL_BIN"
+    if [[ -n "$ACTIVE_BIN" && "$ACTIVE_BIN" != "$GLOBAL_BIN" ]]; then
+        echo "    Note: your current shell resolves 'phone-use' to: $ACTIVE_BIN"
+        echo "    The global CLI is installed correctly, but another install is shadowing it on PATH."
     fi
+elif [[ -n "$ACTIVE_BIN" ]]; then
+    echo "==> phone-use installed at: $ACTIVE_BIN"
+elif [[ -n "$GLOBAL_BIN" || -n "$LOCAL_BIN" ]]; then
+    RESOLVED_BIN="$GLOBAL_BIN"
+    if [[ -z "$RESOLVED_BIN" ]]; then
+        RESOLVED_BIN="$LOCAL_BIN"
+    fi
+    echo "==> phone-use installed at: $RESOLVED_BIN"
+    echo
+    echo "    It is not on your PATH yet. Add it:"
+    echo
+    if [[ -n "$GLOBAL_BIN" ]]; then
+        echo "      export PATH=\"$HOME/.local/bin:\$PATH\""
+        echo "      # Add that line to your ~/.zshrc or ~/.bashrc to make it permanent."
+    else
+        echo "      # activate the project venv:"
+        echo "      source $SCRIPT_DIR/.venv/bin/activate"
+    fi
+else
+    echo "WARNING: phone-use was not found after installation."
+    echo "  If you used global install, add ~/.local/bin to PATH."
+    echo "  If you used local install, activate: source $SCRIPT_DIR/.venv/bin/activate"
 fi
 
 echo

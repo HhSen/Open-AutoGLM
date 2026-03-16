@@ -331,7 +331,7 @@ python main.py --device-type hdc --list-apps
 ./install.sh
 ```
 
-默认会把 `phone-use` 全局安装到用户环境中。如果安装后找不到 `phone-use`，请把下面这一行加入 shell 配置（例如 `~/.zshrc`）：
+默认会把 `phone-use` 以可编辑模式全局安装到用户环境中，这样它会直接引用当前仓库代码；你修改仓库后再次执行 `./install.sh --global`，全局 CLI 会跟着更新。如果安装后找不到 `phone-use`，请把下面这一行加入 shell 配置（例如 `~/.zshrc`）：
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"

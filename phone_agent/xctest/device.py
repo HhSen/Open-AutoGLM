@@ -4,9 +4,8 @@ import subprocess
 import time
 from typing import Optional
 
-from phone_agent.config.apps_ios import APP_PACKAGES_IOS as APP_PACKAGES
+SCALE_FACTOR = 3  # 3 for most modern iPhone
 
-SCALE_FACTOR = 3 # 3 for most modern iPhone 
 
 def _get_wda_session_url(wda_url: str, session_id: str | None, endpoint: str) -> str:
     """
@@ -32,14 +31,14 @@ def get_current_app(
     wda_url: str = "http://localhost:8100", session_id: str | None = None
 ) -> str:
     """
-    Get the currently active app bundle ID and name.
+    Get the currently active app bundle ID.
 
     Args:
         wda_url: WebDriverAgent URL.
         session_id: Optional WDA session ID.
 
     Returns:
-        The app name if recognized, otherwise "System Home".
+        The active bundle ID when available.
     """
     try:
         import requests
@@ -51,18 +50,10 @@ def get_current_app(
 
         if response.status_code == 200:
             data = response.json()
-            # Extract bundle ID from response
-            # Response format: {"value": {"bundleId": "com.apple.AppStore", "name": "", "pid": 825, "processArguments": {...}}, "sessionId": "..."}
             value = data.get("value", {})
             bundle_id = value.get("bundleId", "")
 
-            if bundle_id:
-                # Try to find app name from bundle ID
-                for app_name, package in APP_PACKAGES.items():
-                    if package == bundle_id:
-                        return app_name
-
-            return "System Home"
+            return bundle_id or "System Home"
 
     except ImportError:
         print("Error: requests library required. Install: pip install requests")
@@ -102,7 +93,12 @@ def tap(
                     "id": "finger1",
                     "parameters": {"pointerType": "touch"},
                     "actions": [
-                        {"type": "pointerMove", "duration": 0, "x": x / SCALE_FACTOR, "y": y / SCALE_FACTOR},
+                        {
+                            "type": "pointerMove",
+                            "duration": 0,
+                            "x": x / SCALE_FACTOR,
+                            "y": y / SCALE_FACTOR,
+                        },
                         {"type": "pointerDown", "button": 0},
                         {"type": "pause", "duration": 0.1},
                         {"type": "pointerUp", "button": 0},
@@ -151,7 +147,12 @@ def double_tap(
                     "id": "finger1",
                     "parameters": {"pointerType": "touch"},
                     "actions": [
-                        {"type": "pointerMove", "duration": 0, "x": x / SCALE_FACTOR, "y": y / SCALE_FACTOR},
+                        {
+                            "type": "pointerMove",
+                            "duration": 0,
+                            "x": x / SCALE_FACTOR,
+                            "y": y / SCALE_FACTOR,
+                        },
                         {"type": "pointerDown", "button": 0},
                         {"type": "pause", "duration": 100},
                         {"type": "pointerUp", "button": 0},
@@ -209,7 +210,12 @@ def long_press(
                     "id": "finger1",
                     "parameters": {"pointerType": "touch"},
                     "actions": [
-                        {"type": "pointerMove", "duration": 0, "x": x / SCALE_FACTOR, "y": y / SCALE_FACTOR},
+                        {
+                            "type": "pointerMove",
+                            "duration": 0,
+                            "x": x / SCALE_FACTOR,
+                            "y": y / SCALE_FACTOR,
+                        },
                         {"type": "pointerDown", "button": 0},
                         {"type": "pause", "duration": duration_ms},
                         {"type": "pointerUp", "button": 0},

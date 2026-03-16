@@ -416,6 +416,44 @@ def _is_phone_mode(argv: list[str]) -> bool:
     return False
 
 
+def _normalize_phone_argv(argv: list[str]) -> list[str]:
+    """Move shared phone-mode device flags ahead of the action parser.
+
+    This lets users place `--device-id`, `--device-type`, and `--wda-url`
+    either before `phone`, immediately after it, or after the specific phone
+    action and its arguments.
+    """
+
+    normalized: list[str] = []
+    deferred: list[str] = []
+    i = 0
+
+    while i < len(argv):
+        token = argv[i]
+
+        if token in {"--device-type", "--device-id", "-d", "--wda-url"}:
+            deferred.append(token)
+            if i + 1 < len(argv):
+                deferred.append(argv[i + 1])
+                i += 2
+            else:
+                i += 1
+            continue
+
+        if any(
+            token.startswith(prefix)
+            for prefix in ("--device-type=", "--device-id=", "--wda-url=")
+        ):
+            deferred.append(token)
+            i += 1
+            continue
+
+        normalized.append(token)
+        i += 1
+
+    return deferred + normalized
+
+
 def _build_agent_parser() -> argparse.ArgumentParser:
     """Return an ArgumentParser for agent mode (existing behaviour)."""
     parser = argparse.ArgumentParser(
@@ -696,7 +734,9 @@ def parse_args() -> argparse.Namespace:
         # appeared before 'phone'.
         phone_idx = next(i for i, t in enumerate(raw_argv) if t == "phone")
         # Flags before 'phone' + everything after 'phone'
-        phone_argv = raw_argv[:phone_idx] + raw_argv[phone_idx + 1 :]
+        phone_argv = _normalize_phone_argv(
+            raw_argv[:phone_idx] + raw_argv[phone_idx + 1 :]
+        )
         parser = _build_phone_parser()
         args = parser.parse_args(phone_argv)
         args.command = "phone"
