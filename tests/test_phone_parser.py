@@ -68,3 +68,26 @@ def test_parse_phone_list_apps_args(monkeypatch):
 
     assert args.command == "phone"
     assert args.phone_action == "list-apps"
+
+
+def test_parse_phone_prepare_args(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["phone-use", "phone", "prepare"])
+
+    args = main.parse_args()
+
+    assert args.command == "phone"
+    assert args.phone_action == "prepare"
+
+
+def test_parse_phone_doctor_args_with_device_flag(monkeypatch):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["phone-use", "phone", "doctor", "--device-id", "emulator-5554"],
+    )
+
+    args = main.parse_args()
+
+    assert args.command == "phone"
+    assert args.phone_action == "doctor"
+    assert args.device_id == "emulator-5554"

@@ -20,8 +20,13 @@ from phone_agent.adb.device import (
     tap,
 )
 from phone_agent.adb.input import (
+    ADB_KEYBOARD_IME,
     clear_text,
     detect_and_set_adb_keyboard,
+    ensure_adb_keyboard_ready,
+    get_current_ime,
+    is_adb_keyboard_enabled,
+    is_adb_keyboard_installed,
     restore_keyboard,
     type_text,
 )
@@ -31,9 +36,14 @@ __all__ = [
     # Screenshot
     "get_screenshot",
     # Input
+    "ADB_KEYBOARD_IME",
     "type_text",
     "clear_text",
     "detect_and_set_adb_keyboard",
+    "ensure_adb_keyboard_ready",
+    "get_current_ime",
+    "is_adb_keyboard_enabled",
+    "is_adb_keyboard_installed",
     "restore_keyboard",
     # Device control
     "get_current_app",

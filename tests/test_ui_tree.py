@@ -1,6 +1,7 @@
 import xml.etree.ElementTree as ET
 
 import main
+from phone_agent import hdc
 from phone_agent.actions.handler import parse_action, summarize_ui_tree_for_model
 from phone_agent.adb.device import _extract_android_ui_nodes
 from phone_agent.xctest.device import _extract_ios_ui_nodes
@@ -10,6 +11,15 @@ def test_parse_get_ui_tree_action():
     action = parse_action('do(action="Get_UI_Tree")')
 
     assert action == {"_metadata": "do", "action": "Get_UI_Tree"}
+
+
+def test_hdc_get_ui_tree_is_explicitly_unsupported():
+    try:
+        hdc.get_ui_tree()
+    except NotImplementedError as exc:
+        assert str(exc) == "UI tree is not supported for device type: hdc"
+    else:
+        raise AssertionError("Expected HDC get_ui_tree to raise NotImplementedError")
 
 
 def test_extract_android_ui_nodes_includes_relative_coordinates():

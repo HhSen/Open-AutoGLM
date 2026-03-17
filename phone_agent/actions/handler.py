@@ -1,7 +1,6 @@
 """Action handler for processing AI model outputs."""
 
 import ast
-import re
 import subprocess
 import time
 from dataclasses import dataclass

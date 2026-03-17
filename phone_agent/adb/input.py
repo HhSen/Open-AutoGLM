@@ -4,6 +4,9 @@ import base64
 import subprocess
 
 
+ADB_KEYBOARD_IME = "com.android.adbkeyboard/.AdbIME"
+
+
 def _run_adb_command(
     adb_prefix: list[str], command: list[str], description: str
 ) -> subprocess.CompletedProcess:
@@ -75,25 +78,76 @@ def detect_and_set_adb_keyboard(device_id: str | None = None) -> str:
     Returns:
         The original keyboard IME identifier for later restoration.
     """
+    current_ime, _ = ensure_adb_keyboard_ready(device_id=device_id)
+    return current_ime
+
+
+def is_adb_keyboard_installed(device_id: str | None = None) -> bool:
+    """Return True when ADB Keyboard is installed on the device."""
+    adb_prefix = _get_adb_prefix(device_id)
+    result = _run_adb_command(
+        adb_prefix,
+        ["shell", "ime", "list", "-a"],
+        "list input methods",
+    )
+    return ADB_KEYBOARD_IME in (result.stdout + result.stderr)
+
+
+def is_adb_keyboard_enabled(device_id: str | None = None) -> bool:
+    """Return True when ADB Keyboard is enabled on the device."""
+    adb_prefix = _get_adb_prefix(device_id)
+    result = _run_adb_command(
+        adb_prefix,
+        ["shell", "settings", "get", "secure", "enabled_input_methods"],
+        "read enabled input methods",
+    )
+    enabled_imes = (result.stdout + result.stderr).strip()
+    return ADB_KEYBOARD_IME in enabled_imes
+
+
+def get_current_ime(device_id: str | None = None) -> str:
+    """Return the current default input method."""
     adb_prefix = _get_adb_prefix(device_id)
 
-    # Get current IME
     result = _run_adb_command(
         adb_prefix,
         ["shell", "settings", "get", "secure", "default_input_method"],
         "read default input method",
     )
-    current_ime = (result.stdout + result.stderr).strip()
+    return (result.stdout + result.stderr).strip()
 
-    # Switch to ADB Keyboard if not already set
-    if "com.android.adbkeyboard/.AdbIME" not in current_ime:
-        _run_adb_command(
-            adb_prefix,
-            ["shell", "ime", "set", "com.android.adbkeyboard/.AdbIME"],
-            "set ADB keyboard",
+
+def ensure_adb_keyboard_ready(device_id: str | None = None) -> tuple[str, bool]:
+    """Ensure ADB Keyboard is installed, enabled, and selected."""
+    adb_prefix = _get_adb_prefix(device_id)
+
+    if not is_adb_keyboard_installed(device_id=device_id):
+        raise ValueError(
+            "ADB Keyboard is not installed on the device. "
+            "Install it first: https://github.com/senzhk/ADBKeyBoard"
         )
 
-    return current_ime
+    current_ime = get_current_ime(device_id=device_id)
+    changed = False
+
+    if not is_adb_keyboard_enabled(device_id=device_id):
+        _run_adb_command(
+            adb_prefix,
+            ["shell", "ime", "enable", ADB_KEYBOARD_IME],
+            "enable ADB keyboard",
+        )
+        changed = True
+
+    # Switch to ADB Keyboard if not already set
+    if ADB_KEYBOARD_IME not in current_ime:
+        _run_adb_command(
+            adb_prefix,
+            ["shell", "ime", "set", ADB_KEYBOARD_IME],
+            "set ADB keyboard",
+        )
+        changed = True
+
+    return current_ime, changed
 
 
 def restore_keyboard(ime: str, device_id: str | None = None) -> None:

@@ -18,7 +18,6 @@ import os
 import shutil
 import subprocess
 import sys
-from urllib.parse import urlparse
 
 from openai import OpenAI
 
@@ -179,9 +178,6 @@ def check_model_api(base_url: str, api_key: str, model_name: str) -> bool:
     # Check 1: Network connectivity
     print(f"1. Checking API connectivity ({base_url})...", end=" ")
     try:
-        # Parse the URL to get host and port
-        parsed = urlparse(base_url)
-
         # Create OpenAI client
         client = OpenAI(base_url=base_url, api_key=api_key, timeout=10.0)
 
@@ -198,7 +194,7 @@ def check_model_api(base_url: str, api_key: str, model_name: str) -> bool:
         else:
             print("❌ FAILED")
             print(f"   Error: Model '{model_name}' not found.")
-            print(f"   Available models:")
+            print("   Available models:")
             for m in available_models[:10]:  # Show first 10 models
                 print(f"     - {m}")
             if len(available_models) > 10:
@@ -225,7 +221,7 @@ def check_model_api(base_url: str, api_key: str, model_name: str) -> bool:
             "Name or service not known" in error_msg
             or "nodename nor servname" in error_msg
         ):
-            print(f"   Error: Cannot resolve hostname")
+            print("   Error: Cannot resolve hostname")
             print("   Solution:")
             print("     1. Check the URL is correct")
             print("     2. Verify DNS settings")
@@ -412,14 +408,14 @@ def handle_device_commands(args) -> bool:
 
             status = conn.get_wda_status()
             if status:
-                print(f"\nStatus details:")
+                print("\nStatus details:")
                 value = status.get("value", {})
                 print(f"  Session ID: {status.get('sessionId', 'N/A')}")
                 print(f"  Build: {value.get('build', {}).get('time', 'N/A')}")
 
                 current_app = value.get("currentApp", {})
                 if current_app:
-                    print(f"\nCurrent App:")
+                    print("\nCurrent App:")
                     print(f"  Bundle ID: {current_app.get('bundleId', 'N/A')}")
                     print(f"  Process ID: {current_app.get('pid', 'N/A')}")
         else:
@@ -428,7 +424,7 @@ def handle_device_commands(args) -> bool:
             print("  1. Open WebDriverAgent.xcodeproj in Xcode")
             print("  2. Select your device")
             print("  3. Run WebDriverAgentRunner (Product > Test or Cmd+U)")
-            print(f"  4. For USB: Run port forwarding: iproxy 8100 8100")
+            print("  4. For USB: Run port forwarding: iproxy 8100 8100")
 
         return True
 

@@ -22,7 +22,6 @@ import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
-from urllib.parse import urlparse
 
 from openai import OpenAI
 
@@ -46,7 +45,9 @@ from phone_agent.xctest import list_devices as list_ios_devices
 
 
 def check_system_requirements(
-    device_type: DeviceType = DeviceType.ADB, wda_url: str = "http://localhost:8100"
+    device_type: DeviceType = DeviceType.ADB,
+    wda_url: str = "http://localhost:8100",
+    device_id: str | None = None,
 ) -> bool:
     """
     Check system requirements before running the agent.
@@ -184,9 +185,14 @@ def check_system_requirements(
                 device_ids = [d.strip() for d in devices]
             else:  # IOS
                 device_ids = devices
-            print(
-                f"✅ OK ({len(devices)} device(s): {', '.join(device_ids[:2])}{'...' if len(device_ids) > 2 else ''})"
-            )
+            if device_id and device_id not in device_ids:
+                print("❌ FAILED")
+                print(f"   Error: Selected device '{device_id}' is not connected.")
+                all_passed = False
+            else:
+                print(
+                    f"✅ OK ({len(devices)} device(s): {', '.join(device_ids[:2])}{'...' if len(device_ids) > 2 else ''})"
+                )
     except subprocess.TimeoutExpired:
         print("❌ FAILED")
         print(f"   Error: {tool_name} command timed out.")
@@ -207,7 +213,8 @@ def check_system_requirements(
         print("3. Checking ADB Keyboard...", end=" ")
         try:
             result = subprocess.run(
-                ["adb", "shell", "ime", "list", "-s"],
+                (["adb", "-s", device_id] if device_id else ["adb"])
+                + ["shell", "ime", "list", "-a"],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -280,6 +287,84 @@ def check_system_requirements(
     return all_passed
 
 
+def ensure_phone_control_ready(
+    device_type: DeviceType,
+    device_id: str | None = None,
+    *,
+    verbose: bool = True,
+) -> bool:
+    """Prepare the selected device for direct `phone` control."""
+    if device_type != DeviceType.ADB:
+        if verbose:
+            if device_type == DeviceType.HDC:
+                print(
+                    "HarmonyOS input uses the native keyboard; no preparation needed."
+                )
+            else:
+                print("iOS direct control is ready when WebDriverAgent is available.")
+        return True
+
+    from phone_agent.adb.input import ADB_KEYBOARD_IME, ensure_adb_keyboard_ready
+
+    try:
+        original_ime, changed = ensure_adb_keyboard_ready(device_id=device_id)
+    except Exception as exc:
+        if verbose:
+            print(f"Error: {exc}")
+            print(
+                "Run `phone-use phone doctor` after installing and enabling ADB Keyboard "
+                "to verify device prerequisites."
+            )
+        return False
+
+    if verbose:
+        if changed:
+            previous = original_ime or "unknown"
+            print(
+                f"Prepared device input: switched from {previous} to {ADB_KEYBOARD_IME}"
+            )
+        else:
+            print(f"Prepared device input: {ADB_KEYBOARD_IME} is already active")
+
+    return True
+
+
+def run_phone_doctor(
+    device_type: DeviceType,
+    device_id: str | None = None,
+    wda_url: str = "http://localhost:8100",
+) -> bool:
+    """Check prerequisites for direct `phone` control."""
+    ok = check_system_requirements(
+        device_type=device_type,
+        wda_url=wda_url,
+        device_id=device_id,
+    )
+    if not ok:
+        return False
+
+    if device_type == DeviceType.ADB:
+        print("4. Preparing ADB Keyboard for direct control...", end=" ")
+        if ensure_phone_control_ready(device_type, device_id=device_id, verbose=False):
+            print("✅ OK")
+        else:
+            print("❌ FAILED")
+            print("   Error: Could not enable and switch to ADB Keyboard.")
+            print(
+                "   Solution: enable the keyboard on-device once, then run `phone-use phone prepare`."
+            )
+            print("-" * 50)
+            print("❌ Phone doctor found issues. Please fix the items above.")
+            return False
+
+        print("-" * 50)
+        print("✅ Phone doctor passed. Device is ready for direct control.\n")
+    else:
+        print("✅ Phone doctor passed. Device is ready for direct control.\n")
+
+    return True
+
+
 def check_model_api(base_url: str, model_name: str, api_key: str = "EMPTY") -> bool:
     """
     Check if the model API is accessible and the specified model exists.
@@ -344,7 +429,7 @@ def check_model_api(base_url: str, model_name: str, api_key: str = "EMPTY") -> b
             "Name or service not known" in error_msg
             or "nodename nor servname" in error_msg
         ):
-            print(f"   Error: Cannot resolve hostname")
+            print("   Error: Cannot resolve hostname")
             print("   Solution:")
             print("     1. Check the URL is correct")
             print("     2. Verify DNS settings")
@@ -584,6 +669,8 @@ Examples:
     phone-use phone double-tap 540 960
     phone-use phone long-press 540 960 --duration-ms 2000
     phone-use phone swipe 540 1200 540 400 --duration-ms 400
+    phone-use phone prepare
+    phone-use phone doctor
     phone-use phone type "Hello world"
     phone-use phone clear
     phone-use phone back
@@ -670,6 +757,18 @@ Examples:
     # --- type ---
     p = action_parsers.add_parser("type", help="Type text into the focused field")
     p.add_argument("text", type=str, help="Text to type")
+
+    # --- prepare ---
+    action_parsers.add_parser(
+        "prepare",
+        help="Prepare the device for direct control (e.g. activate ADB Keyboard)",
+    )
+
+    # --- doctor ---
+    action_parsers.add_parser(
+        "doctor",
+        help="Check direct-control prerequisites and report problems",
+    )
 
     # --- clear ---
     action_parsers.add_parser("clear", help="Clear text in the focused field")
@@ -824,14 +923,14 @@ def handle_ios_device_commands(args) -> bool:
 
             status = conn.get_wda_status()
             if status:
-                print(f"\nStatus details:")
+                print("\nStatus details:")
                 value = status.get("value", {})
                 print(f"  Session ID: {status.get('sessionId', 'N/A')}")
                 print(f"  Build: {value.get('build', {}).get('time', 'N/A')}")
 
                 current_app = value.get("currentApp", {})
                 if current_app:
-                    print(f"\nCurrent App:")
+                    print("\nCurrent App:")
                     print(f"  Bundle ID: {current_app.get('bundleId', 'N/A')}")
                     print(f"  Process ID: {current_app.get('pid', 'N/A')}")
         else:
@@ -840,7 +939,7 @@ def handle_ios_device_commands(args) -> bool:
             print("  1. Open WebDriverAgent.xcodeproj in Xcode")
             print("  2. Select your device")
             print("  3. Run WebDriverAgentRunner (Product > Test or Cmd+U)")
-            print(f"  4. For USB: Run port forwarding: iproxy 8100 8100")
+            print("  4. For USB: Run port forwarding: iproxy 8100 8100")
 
         return True
 
@@ -918,9 +1017,9 @@ def handle_device_commands(args) -> bool:
             # Try to get device IP
             ip = conn.get_device_ip(args.device_id)
             if ip:
-                print(f"\nYou can now connect remotely using:")
+                print("\nYou can now connect remotely using:")
                 print(f"  python main.py --connect {ip}:{port}")
-                print(f"\nOr via ADB directly:")
+                print("\nOr via ADB directly:")
                 print(f"  adb connect {ip}:{port}")
             else:
                 print("\nCould not determine device IP. Check device WiFi settings.")
@@ -966,6 +1065,33 @@ def run_direct_phone(args: argparse.Namespace) -> None:
         "argv": sys.argv,
         "status": "started",
     }
+
+    if action == "doctor":
+        if not run_phone_doctor(device_type, device_id=device_id, wda_url=wda_url):
+            sys.exit(1)
+        return
+
+    if action == "prepare":
+        if device_type in {DeviceType.HDC, DeviceType.IOS}:
+            if not check_system_requirements(
+                device_type=device_type,
+                wda_url=wda_url,
+                device_id=device_id,
+            ):
+                sys.exit(1)
+            if device_type == DeviceType.HDC:
+                print("HarmonyOS device is ready for direct control.")
+            else:
+                print(
+                    "WebDriverAgent is reachable. iOS device is ready for direct control."
+                )
+            return
+
+        if not ensure_phone_control_ready(
+            device_type, device_id=device_id, verbose=True
+        ):
+            sys.exit(1)
+        return
 
     def _capture_phone_state(get_current_app, get_screenshot) -> dict:
         snapshot = {}
@@ -1349,6 +1475,13 @@ def run_direct_phone(args: argparse.Namespace) -> None:
 
     factory = get_device_factory()
 
+    if device_type == DeviceType.ADB and not ensure_phone_control_ready(
+        device_type,
+        device_id=device_id,
+        verbose=False,
+    ):
+        sys.exit(1)
+
     before_state = None
     if action in MUTATING_PHONE_ACTIONS:
         before_state = _capture_phone_state(
@@ -1407,19 +1540,7 @@ def run_direct_phone(args: argparse.Namespace) -> None:
             }
 
         elif action == "type":
-            if device_type == DeviceType.ADB:
-                from phone_agent.adb.input import (
-                    detect_and_set_adb_keyboard,
-                    restore_keyboard,
-                    type_text,
-                )
-
-                original_ime = detect_and_set_adb_keyboard(device_id=device_id)
-                type_text(args.text, device_id=device_id)
-                if original_ime:
-                    restore_keyboard(original_ime, device_id=device_id)
-            else:
-                factory.type_text(args.text, device_id=device_id)
+            factory.type_text(args.text, device_id=device_id)
             print(f"Typed: {args.text!r}")
             action_log["params"] = {"text": args.text}
 
@@ -1587,6 +1708,7 @@ def main():
         wda_url=args.wda_url
         if device_type == DeviceType.IOS
         else "http://localhost:8100",
+        device_id=args.device_id,
     ):
         sys.exit(1)
 

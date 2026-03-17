@@ -1,10 +1,8 @@
 """Device control utilities for HarmonyOS automation."""
 
-import os
 import re
 import subprocess
 import time
-from typing import List, Optional, Tuple
 
 from phone_agent.config.apps_harmonyos import APP_ABILITIES, APP_PACKAGES, get_app_name
 from phone_agent.config.timing import TIMING_CONFIG
@@ -99,6 +97,16 @@ def list_installed_apps(device_id: str | None = None) -> list[str]:
         encoding="utf-8",
     )
     return _parse_installed_bundle_output(result.stdout)
+
+
+def get_ui_tree(
+    device_id: str | None = None,
+    screen_width: int | None = None,
+    screen_height: int | None = None,
+) -> dict:
+    """Raise because HarmonyOS UI tree extraction is not implemented."""
+    del device_id, screen_width, screen_height
+    raise NotImplementedError("UI tree is not supported for device type: hdc")
 
 
 def _parse_installed_bundle_output(output: str) -> list[str]:

@@ -36,3 +36,8 @@ py-modules = ["main"]
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["phone_agent*"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.6",
+]
