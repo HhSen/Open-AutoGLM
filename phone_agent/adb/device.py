@@ -403,7 +403,7 @@ def launch_app(
         delay = TIMING_CONFIG.device.default_launch_delay
 
     package = APP_PACKAGES.get(app_name, app_name.strip())
-    if not package:
+    if not package or package.isdigit():
         return False
 
     adb_prefix = _get_adb_prefix(device_id)

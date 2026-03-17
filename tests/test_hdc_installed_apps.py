@@ -42,3 +42,14 @@ def test_launch_app_accepts_raw_bundle_name(monkeypatch):
             {"capture_output": True},
         )
     ]
+
+
+def test_launch_app_rejects_numeric_identifier(monkeypatch):
+    monkeypatch.setattr(
+        "phone_agent.hdc.device._run_hdc_checked",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should not run hdc")
+        ),
+    )
+
+    assert launch_app("99") is False

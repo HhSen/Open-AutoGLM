@@ -82,3 +82,35 @@ def test_run_direct_phone_exits_when_prepare_fails(monkeypatch):
 
     with pytest.raises(SystemExit):
         main.run_direct_phone(args)
+
+
+def test_run_direct_phone_launch_failure_has_clear_package_hint(monkeypatch, capsys):
+    monkeypatch.setattr(
+        main,
+        "ensure_phone_control_ready",
+        lambda device_type, device_id=None, verbose=True: True,
+    )
+    monkeypatch.setattr(main, "set_device_type", lambda device_type: None)
+    monkeypatch.setattr(
+        main,
+        "get_device_factory",
+        lambda: SimpleNamespace(launch_app=lambda *args, **kwargs: False),
+    )
+    monkeypatch.setattr(
+        main, "append_phone_action_log", lambda payload: "/tmp/log.jsonl"
+    )
+
+    args = argparse.Namespace(
+        device_type="adb",
+        device_id="serial-1",
+        wda_url="http://localhost:8100",
+        phone_action="launch",
+        app_name="99",
+        delay=None,
+    )
+
+    with pytest.raises(SystemExit):
+        main.run_direct_phone(args)
+
+    captured = capsys.readouterr()
+    assert "raw package name or bundle name" in captured.out

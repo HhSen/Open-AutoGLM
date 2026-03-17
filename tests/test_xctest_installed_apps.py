@@ -48,3 +48,14 @@ def test_launch_app_accepts_raw_bundle_id(monkeypatch):
             False,
         )
     ]
+
+
+def test_launch_app_rejects_numeric_identifier(monkeypatch):
+    monkeypatch.setattr(
+        "phone_agent.xctest.device._require_requests",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("should not create requests client")
+        ),
+    )
+
+    assert launch_app("99") is False

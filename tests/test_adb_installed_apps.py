@@ -44,3 +44,14 @@ def test_launch_app_accepts_raw_package_name(monkeypatch):
             "launch com.example.raw",
         )
     ]
+
+
+def test_launch_app_rejects_numeric_identifier(monkeypatch):
+    monkeypatch.setattr(
+        "phone_agent.adb.device._run_adb_command",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("should not run adb")
+        ),
+    )
+
+    assert launch_app("99") is False

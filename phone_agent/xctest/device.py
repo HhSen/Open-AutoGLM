@@ -566,7 +566,7 @@ def launch_app(
         True if the launch command was issued, False if the input is empty.
     """
     bundle_id = APP_PACKAGES.get(app_name, app_name.strip())
-    if not bundle_id:
+    if not bundle_id or bundle_id.isdigit():
         return False
 
     requests = _require_requests()

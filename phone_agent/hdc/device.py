@@ -329,7 +329,7 @@ def launch_app(
         delay = TIMING_CONFIG.device.default_launch_delay
 
     bundle = APP_PACKAGES.get(app_name, app_name.strip())
-    if not bundle:
+    if not bundle or bundle.isdigit():
         return False
 
     hdc_prefix = _get_hdc_prefix(device_id)

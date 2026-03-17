@@ -1373,7 +1373,7 @@ def run_direct_phone(args: argparse.Namespace) -> None:
                 else:
                     raise ValueError(
                         f"Could not launch app '{args.app_name}'. "
-                        "Run 'python main.py --device-type ios phone list-apps' to inspect installed apps, or pass a known label from the app map."
+                        "Run 'phone-use phone list-apps' to inspect installed apps. If the app is not in the registry map, pass its raw package name"
                     )
 
             elif action == "screenshot":
@@ -1573,7 +1573,7 @@ def run_direct_phone(args: argparse.Namespace) -> None:
                 dt = args.device_type
                 raise ValueError(
                     f"Could not launch app '{args.app_name}'. "
-                    f"Run 'python main.py --device-type {dt} phone list-apps' to inspect installed apps, or pass a known label from the app map."
+                    f"Run 'python main.py --device-type {dt} phone list-apps' to inspect installed apps. If the app is not in the registry map, pass its raw package name or bundle name instead of a numeric index."
                 )
 
         elif action == "screenshot":
