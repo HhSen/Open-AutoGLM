@@ -124,9 +124,15 @@ def test_print_or_save_state_prints_summary_and_saves_full_tree(tmp_path, capsys
     main._print_or_save_state(state, str(output_path))
 
     stdout = capsys.readouterr().out
-    assert "Full state saved to:" in stdout
-    assert "Device info:" in stdout
-    assert "Physical size: 1200x2670" in stdout
+    assert "STATUS: OK" in stdout
+    assert "SUMMARY: Captured current device state." in stdout
+    assert "NODE_COUNT: 130" in stdout
+    assert "TRUNCATED: true" in stdout
+    assert (
+        'DEVICE_INFO: {"Device": "Google Pixel 8", "Physical size": "1200x2670"}'
+        in stdout
+    )
+    assert f"FULL_RESULT_FILE: {output_path}" in stdout
     assert '"node_count": 130' in stdout
     assert '"truncated": true' in stdout
 
@@ -134,3 +140,19 @@ def test_print_or_save_state_prints_summary_and_saves_full_tree(tmp_path, capsys
     assert '"platform": "adb"' in saved_payload
     assert '"Physical size": "1200x2670"' in saved_payload
     assert saved_payload.count('"type": "TextView"') == 130
+
+
+def test_print_or_save_state_skips_file_when_preview_is_complete(capsys):
+    state = {
+        "platform": "adb",
+        "device_info": {"Device": "Google Pixel 8"},
+        "nodes": [{"type": "TextView", "text": "Short label", "clickable": False}],
+    }
+
+    main._print_or_save_state(state, None)
+
+    stdout = capsys.readouterr().out
+    assert "STATUS: OK" in stdout
+    assert "RESULT_PREVIEW:" in stdout
+    assert '"node_count": 1' in stdout
+    assert "FULL_RESULT_FILE:" not in stdout

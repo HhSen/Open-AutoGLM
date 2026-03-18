@@ -15,7 +15,6 @@ Environment Variables:
 """
 
 import argparse
-import json
 import os
 import shutil
 import subprocess
@@ -25,8 +24,10 @@ import sys
 from openai import OpenAI
 
 from phone_agent import PhoneAgent
-from phone_agent.actions.handler import summarize_ui_tree_for_model
 from phone_agent.actions.phone_handlers import get_phone_handler
+from phone_agent.actions.phone_handlers import (
+    _print_or_save_state as _render_phone_state,
+)
 from phone_agent.agent import AgentConfig
 from phone_agent.agent_ios import IOSAgentConfig, IOSPhoneAgent
 from phone_agent.device_factory import DeviceType, get_device_factory, set_device_type
@@ -1075,34 +1076,21 @@ def run_phone(args: argparse.Namespace) -> None:
             sys.exit(1)
         return
 
-    # -- build and set up the handler for this device type --------------
-    handler = get_phone_handler(device_type, device_id=device_id, wda_url=wda_url)
-    handler.setup()
-
-    # -- dispatch action under the logger context manager ---------------
     with PhoneActionLogger(action, device_type.value, device_id) as log:
+        # -- build and set up the handler for this device type ----------
+        handler = get_phone_handler(device_type, device_id=device_id, wda_url=wda_url)
+        handler.setup()
+
+        # -- dispatch action under the logger context manager -----------
         handler.run_action(action, args, log.entry)
+
+    if log.log_path:
+        print(f"ACTION_LOG: {log.log_path}")
 
 
 def _print_or_save_state(state: dict, output_path: str | None) -> None:
-    """Print the summarized phone state and optionally save the full payload."""
-    summarized_state = summarize_ui_tree_for_model(state)
-    device_info = summarized_state.pop("device_info", None)
-    payload = json.dumps(summarized_state, ensure_ascii=False, indent=2)
-
-    if output_path:
-        with open(output_path, "w", encoding="utf-8") as file_obj:
-            file_obj.write(json.dumps(state, ensure_ascii=False, indent=2))
-            file_obj.write("\n")
-        print(f"Full state saved to: {output_path}")
-
-    if isinstance(device_info, dict) and device_info:
-        print("Device info:")
-        for label, value in device_info.items():
-            print(f"{label}: {value}")
-        print()
-
-    print(payload)
+    """Print the summarized phone state and persist the full payload."""
+    _render_phone_state(state, output_path)
 
 
 def main():

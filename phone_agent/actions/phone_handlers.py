@@ -23,11 +23,14 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import json
 import os
-import sys
 from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Any
 
 from phone_agent.device_factory import DeviceFactory, DeviceType
+from phone_agent.phone_mode_logging import write_phone_action_artifact
 
 # ---------------------------------------------------------------------------
 # Abstract base
@@ -64,45 +67,118 @@ def _hash_b64(b64_data: str) -> str:
     return hashlib.sha256(base64.b64decode(b64_data)).hexdigest()
 
 
+class PhoneActionError(RuntimeError):
+    """Action failure with an operator-facing correction hint."""
+
+    def __init__(self, message: str, correction: str) -> None:
+        super().__init__(message)
+        self.correction = correction
+
+
+def _stringify_output_value(value: Any) -> str:
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _build_preview(text: str, max_chars: int = 1200) -> tuple[str, bool]:
+    if len(text) <= max_chars:
+        return text, False
+    return text[: max_chars - 24].rstrip() + "\n... [truncated preview]", True
+
+
+def _print_action_success(
+    summary: str,
+    *,
+    details: dict[str, Any] | None = None,
+    preview: str | None = None,
+    full_result_file: str | Path | None = None,
+) -> None:
+    print("STATUS: OK")
+    print(f"SUMMARY: {summary}")
+    if details:
+        for key, value in details.items():
+            print(f"{key.upper()}: {_stringify_output_value(value)}")
+    if preview:
+        print("RESULT_PREVIEW:")
+        print(preview)
+    if full_result_file:
+        print(f"FULL_RESULT_FILE: {full_result_file}")
+
+
 def _print_labeled_apps(
     identifiers: list[str],
     lookup_label,
     heading: str,
     note: str | None = None,
 ) -> None:
-    print(heading)
+    lines = [heading]
     for identifier in identifiers:
         label = lookup_label(identifier)
         if label:
-            print(f"  - {label} ({identifier})")
+            lines.append(f"- {label} ({identifier})")
         else:
-            print(f"  - {identifier}")
+            lines.append(f"- {identifier}")
     if note:
-        print(f"\nNote: {note}")
+        lines.append("")
+        lines.append(f"Note: {note}")
+
+    full_text = "\n".join(lines) + "\n"
+    preview_lines = lines[:14]
+    preview = "\n".join(preview_lines)
+    is_truncated = len(lines) > 14
+    if is_truncated:
+        preview += "\n... [truncated preview]"
+    full_result_file = (
+        write_phone_action_artifact("list-apps", ".txt", full_text)
+        if is_truncated
+        else None
+    )
+
+    _print_action_success(
+        f"Listed {len(identifiers)} installed apps.",
+        details={"app_count": len(identifiers)},
+        preview=preview,
+        full_result_file=full_result_file,
+    )
 
 
 def _print_or_save_state(state: dict, output_path: str | None) -> None:
-    import json
-
     from phone_agent.actions.handler import summarize_ui_tree_for_model
 
     summarized = summarize_ui_tree_for_model(state)
     device_info = summarized.pop("device_info", None)
     payload = json.dumps(summarized, ensure_ascii=False, indent=2)
+    full_payload = json.dumps(state, ensure_ascii=False, indent=2) + "\n"
+    preview, is_truncated = _build_preview(payload)
+    full_result_file: Path | None = None
 
     if output_path:
-        with open(output_path, "w", encoding="utf-8") as fh:
-            fh.write(json.dumps(state, ensure_ascii=False, indent=2))
-            fh.write("\n")
-        print(f"Full state saved to: {output_path}")
+        full_result_file = Path(output_path).expanduser()
+        full_result_file.parent.mkdir(parents=True, exist_ok=True)
+        full_result_file.write_text(full_payload, encoding="utf-8")
+    elif is_truncated:
+        full_result_file = write_phone_action_artifact("state", ".json", full_payload)
 
+    details: dict[str, Any] = {
+        "node_count": summarized.get("node_count"),
+        "truncated": summarized.get("truncated"),
+    }
     if isinstance(device_info, dict) and device_info:
-        print("Device info:")
-        for label, value in device_info.items():
-            print(f"{label}: {value}")
-        print()
+        details["device_info"] = device_info
 
-    print(payload)
+    _print_action_success(
+        "Captured current device state.",
+        details=details,
+        preview=preview,
+        full_result_file=full_result_file,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -125,14 +201,19 @@ class IOSPhoneHandler(PhoneHandler):
 
         conn = XCTestConnection(wda_url=self.wda_url)
         if not conn.is_wda_ready(timeout=5):
-            print(f"Error: WebDriverAgent is not reachable at {self.wda_url}")
-            print("Make sure WDA is running and port forwarding is set up.")
-            sys.exit(1)
+            raise PhoneActionError(
+                f"WebDriverAgent is not reachable at {self.wda_url}.",
+                "Start WebDriverAgent and confirm port forwarding to the configured "
+                "`--wda-url`, then rerun the command.",
+            )
 
         ok, session_id = conn.start_wda_session()
         if not ok or not session_id:
-            print("Error: Failed to create a WDA session.")
-            sys.exit(1)
+            raise PhoneActionError(
+                "Failed to create a WebDriverAgent session.",
+                "Make sure the iOS device is unlocked, trusted, and visible to WDA, "
+                "then retry.",
+            )
 
         self._session_id = session_id
         self._xctest = xctest
@@ -162,7 +243,10 @@ class IOSPhoneHandler(PhoneHandler):
                 session_id=session_id,
                 delay=args.delay if args.delay is not None else 1.0,
             )
-            print(f"Tapped ({args.x}, {args.y})")
+            _print_action_success(
+                "Tap completed.",
+                details={"x": args.x, "y": args.y, "delay": args.delay},
+            )
             action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
 
         elif action == "double-tap":
@@ -173,7 +257,10 @@ class IOSPhoneHandler(PhoneHandler):
                 session_id=session_id,
                 delay=args.delay if args.delay is not None else 1.0,
             )
-            print(f"Double-tapped ({args.x}, {args.y})")
+            _print_action_success(
+                "Double tap completed.",
+                details={"x": args.x, "y": args.y, "delay": args.delay},
+            )
             action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
 
         elif action == "long-press":
@@ -185,7 +272,15 @@ class IOSPhoneHandler(PhoneHandler):
                 session_id=session_id,
                 delay=args.delay if args.delay is not None else 1.0,
             )
-            print(f"Long-pressed ({args.x}, {args.y}) for {args.duration_ms} ms")
+            _print_action_success(
+                "Long press completed.",
+                details={
+                    "x": args.x,
+                    "y": args.y,
+                    "duration_ms": args.duration_ms,
+                    "delay": args.delay,
+                },
+            )
             action_log["params"] = {
                 "x": args.x,
                 "y": args.y,
@@ -204,8 +299,16 @@ class IOSPhoneHandler(PhoneHandler):
                 session_id=session_id,
                 delay=args.delay if args.delay is not None else 1.0,
             )
-            print(
-                f"Swiped ({args.start_x}, {args.start_y}) -> ({args.end_x}, {args.end_y})"
+            _print_action_success(
+                "Swipe completed.",
+                details={
+                    "start_x": args.start_x,
+                    "start_y": args.start_y,
+                    "end_x": args.end_x,
+                    "end_y": args.end_y,
+                    "duration_ms": args.duration_ms,
+                    "delay": args.delay,
+                },
             )
             action_log["params"] = {
                 "start_x": args.start_x,
@@ -220,14 +323,14 @@ class IOSPhoneHandler(PhoneHandler):
             from phone_agent.xctest.input import type_text as xctest_type
 
             xctest_type(args.text, wda_url=wda_url, session_id=session_id)
-            print(f"Typed: {args.text!r}")
+            _print_action_success("Text entered.", details={"text": args.text})
             action_log["params"] = {"text": args.text}
 
         elif action == "clear":
             from phone_agent.xctest.input import clear_text as xctest_clear
 
             xctest_clear(wda_url=wda_url, session_id=session_id)
-            print("Cleared text")
+            _print_action_success("Text cleared.")
             action_log["params"] = {}
 
         elif action == "back":
@@ -236,7 +339,9 @@ class IOSPhoneHandler(PhoneHandler):
                 session_id=session_id,
                 delay=args.delay if args.delay is not None else 1.0,
             )
-            print("Pressed back")
+            _print_action_success(
+                "Back navigation completed.", details={"delay": args.delay}
+            )
             action_log["params"] = {"delay": args.delay}
 
         elif action == "home":
@@ -245,7 +350,9 @@ class IOSPhoneHandler(PhoneHandler):
                 session_id=session_id,
                 delay=args.delay if args.delay is not None else 1.0,
             )
-            print("Went to home screen")
+            _print_action_success(
+                "Returned to the home screen.", details={"delay": args.delay}
+            )
             action_log["params"] = {"delay": args.delay}
 
         elif action == "launch":
@@ -256,16 +363,19 @@ class IOSPhoneHandler(PhoneHandler):
                 delay=args.delay if args.delay is not None else 1.0,
             )
             if success:
-                print(f"Launched: {args.app_name}")
+                _print_action_success(
+                    "App launch completed.",
+                    details={"app_name": args.app_name, "delay": args.delay},
+                )
                 action_log["params"] = {
                     "app_name": args.app_name,
                     "delay": args.delay,
                 }
             else:
-                raise ValueError(
-                    f"Could not launch app '{args.app_name}'. "
-                    "Run 'phone-use phone list-apps' to inspect installed apps. "
-                    "If the app is not in the registry map, pass its raw package name"
+                raise PhoneActionError(
+                    f"Could not launch app '{args.app_name}'.",
+                    "Run `phone-use phone list-apps` to inspect installed apps. If the "
+                    "app is missing from the registry map, pass its raw bundle id.",
                 )
 
         elif action == "screenshot":
@@ -277,12 +387,17 @@ class IOSPhoneHandler(PhoneHandler):
                 wda_url=wda_url, session_id=session_id, device_id=device_id
             )
             png_bytes = base64.b64decode(shot.base64_data)
-            with open(args.output, "wb") as fh:
+            output_path = os.path.abspath(os.path.expanduser(args.output))
+            with open(output_path, "wb") as fh:
                 fh.write(png_bytes)
-            print(f"Screenshot saved to: {args.output} ({shot.width}x{shot.height})")
+            _print_action_success(
+                "Screenshot captured.",
+                details={"width": shot.width, "height": shot.height},
+                full_result_file=output_path,
+            )
             action_log["params"] = {"output": args.output}
             action_log["result"] = {
-                "output": os.path.abspath(args.output),
+                "output": output_path,
                 "width": shot.width,
                 "height": shot.height,
                 "screenshot_sha256": _hash_b64(shot.base64_data),
@@ -290,7 +405,9 @@ class IOSPhoneHandler(PhoneHandler):
 
         elif action == "current-app":
             app = xctest.get_current_app(wda_url=wda_url, session_id=session_id)
-            print(f"Current app: {app}")
+            _print_action_success(
+                "Read the current foreground app.", details={"current_app": app}
+            )
             action_log["result"] = {"current_app": app}
 
         elif action == "list-apps":
@@ -318,11 +435,16 @@ class IOSPhoneHandler(PhoneHandler):
             )
             state["device_info"] = self._get_device_info(shot.width, shot.height)
             _print_or_save_state(state, args.output)
+            output_path = (
+                os.path.abspath(os.path.expanduser(args.output))
+                if args.output
+                else None
+            )
             action_log["params"] = {"output": args.output}
             action_log["result"] = {
                 "device_info": state.get("device_info"),
                 "node_count": state.get("node_count"),
-                "output": os.path.abspath(args.output) if args.output else None,
+                "output": output_path,
             }
 
     # ------------------------------------------------------------------
@@ -396,12 +518,11 @@ class ADBPhoneHandler(PhoneHandler):
         try:
             _, _ = ensure_adb_keyboard_ready(device_id=self.device_id)
         except Exception as exc:
-            print(f"Error: {exc}")
-            print(
+            raise PhoneActionError(
+                str(exc),
                 "Run `phone-use phone doctor` after installing and enabling ADB Keyboard "
-                "to verify device prerequisites."
+                "to verify device prerequisites.",
             )
-            sys.exit(1)
 
         self._factory = get_device_factory()
 
@@ -419,12 +540,18 @@ class ADBPhoneHandler(PhoneHandler):
 
         if action == "tap":
             factory.tap(args.x, args.y, device_id=device_id, delay=args.delay)
-            print(f"Tapped ({args.x}, {args.y})")
+            _print_action_success(
+                "Tap completed.",
+                details={"x": args.x, "y": args.y, "delay": args.delay},
+            )
             action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
 
         elif action == "double-tap":
             factory.double_tap(args.x, args.y, device_id=device_id, delay=args.delay)
-            print(f"Double-tapped ({args.x}, {args.y})")
+            _print_action_success(
+                "Double tap completed.",
+                details={"x": args.x, "y": args.y, "delay": args.delay},
+            )
             action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
 
         elif action == "long-press":
@@ -435,7 +562,15 @@ class ADBPhoneHandler(PhoneHandler):
                 device_id=device_id,
                 delay=args.delay,
             )
-            print(f"Long-pressed ({args.x}, {args.y}) for {args.duration_ms} ms")
+            _print_action_success(
+                "Long press completed.",
+                details={
+                    "x": args.x,
+                    "y": args.y,
+                    "duration_ms": args.duration_ms,
+                    "delay": args.delay,
+                },
+            )
             action_log["params"] = {
                 "x": args.x,
                 "y": args.y,
@@ -453,8 +588,16 @@ class ADBPhoneHandler(PhoneHandler):
                 device_id=device_id,
                 delay=args.delay,
             )
-            print(
-                f"Swiped ({args.start_x}, {args.start_y}) -> ({args.end_x}, {args.end_y})"
+            _print_action_success(
+                "Swipe completed.",
+                details={
+                    "start_x": args.start_x,
+                    "start_y": args.start_y,
+                    "end_x": args.end_x,
+                    "end_y": args.end_y,
+                    "duration_ms": args.duration_ms,
+                    "delay": args.delay,
+                },
             )
             action_log["params"] = {
                 "start_x": args.start_x,
@@ -467,22 +610,26 @@ class ADBPhoneHandler(PhoneHandler):
 
         elif action == "type":
             factory.type_text(args.text, device_id=device_id)
-            print(f"Typed: {args.text!r}")
+            _print_action_success("Text entered.", details={"text": args.text})
             action_log["params"] = {"text": args.text}
 
         elif action == "clear":
             factory.clear_text(device_id=device_id)
-            print("Cleared text")
+            _print_action_success("Text cleared.")
             action_log["params"] = {}
 
         elif action == "back":
             factory.back(device_id=device_id, delay=args.delay)
-            print("Pressed back")
+            _print_action_success(
+                "Back navigation completed.", details={"delay": args.delay}
+            )
             action_log["params"] = {"delay": args.delay}
 
         elif action == "home":
             factory.home(device_id=device_id, delay=args.delay)
-            print("Went to home screen")
+            _print_action_success(
+                "Returned to the home screen.", details={"delay": args.delay}
+            )
             action_log["params"] = {"delay": args.delay}
 
         elif action == "launch":
@@ -490,29 +637,37 @@ class ADBPhoneHandler(PhoneHandler):
                 args.app_name, device_id=device_id, delay=args.delay
             )
             if success:
-                print(f"Launched: {args.app_name}")
+                _print_action_success(
+                    "App launch completed.",
+                    details={"app_name": args.app_name, "delay": args.delay},
+                )
                 action_log["params"] = {
                     "app_name": args.app_name,
                     "delay": args.delay,
                 }
             else:
                 dt = args.device_type
-                raise ValueError(
-                    f"Could not launch app '{args.app_name}'. "
-                    f"Run 'python main.py --device-type {dt} phone list-apps' to inspect "
+                raise PhoneActionError(
+                    f"Could not launch app '{args.app_name}'.",
+                    f"Run `python main.py --device-type {dt} phone list-apps` to inspect "
                     "installed apps. If the app is not in the registry map, pass its raw "
-                    "package name or bundle name instead of a numeric index."
+                    "package name or bundle name instead of a numeric index.",
                 )
 
         elif action == "screenshot":
             shot = factory.get_screenshot(device_id=device_id)
             png_bytes = base64.b64decode(shot.base64_data)
-            with open(args.output, "wb") as fh:
+            output_path = os.path.abspath(os.path.expanduser(args.output))
+            with open(output_path, "wb") as fh:
                 fh.write(png_bytes)
-            print(f"Screenshot saved to: {args.output} ({shot.width}x{shot.height})")
+            _print_action_success(
+                "Screenshot captured.",
+                details={"width": shot.width, "height": shot.height},
+                full_result_file=output_path,
+            )
             action_log["params"] = {"output": args.output}
             action_log["result"] = {
-                "output": os.path.abspath(args.output),
+                "output": output_path,
                 "width": shot.width,
                 "height": shot.height,
                 "screenshot_sha256": _hash_b64(shot.base64_data),
@@ -520,7 +675,9 @@ class ADBPhoneHandler(PhoneHandler):
 
         elif action == "current-app":
             app = factory.get_current_app(device_id=device_id)
-            print(f"Current app: {app}")
+            _print_action_success(
+                "Read the current foreground app.", details={"current_app": app}
+            )
             action_log["result"] = {"current_app": app}
 
         elif action == "list-apps":
@@ -543,11 +700,16 @@ class ADBPhoneHandler(PhoneHandler):
             )
             state["device_info"] = self._get_device_info()
             _print_or_save_state(state, args.output)
+            output_path = (
+                os.path.abspath(os.path.expanduser(args.output))
+                if args.output
+                else None
+            )
             action_log["params"] = {"output": args.output}
             action_log["result"] = {
                 "device_info": state.get("device_info"),
                 "node_count": state.get("node_count"),
-                "output": os.path.abspath(args.output) if args.output else None,
+                "output": output_path,
             }
 
     # ------------------------------------------------------------------
@@ -633,8 +795,11 @@ class HDCPhoneHandler(ADBPhoneHandler):
         action_log: dict,
     ) -> None:
         if action == "state":
-            print("Error: state is currently supported on adb and ios, not hdc.")
-            sys.exit(1)
+            raise PhoneActionError(
+                "The `state` action is not supported for HDC devices.",
+                "Use `--device-type adb` or `--device-type ios` for `phone state`, or "
+                "switch to another supported action on HDC.",
+            )
 
         if action == "list-apps":
             from phone_agent.config.apps_harmonyos import (

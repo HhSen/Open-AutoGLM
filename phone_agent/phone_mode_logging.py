@@ -48,6 +48,28 @@ def append_phone_action_log(entry: dict[str, Any]) -> Path:
     return log_path
 
 
+def get_phone_action_artifact_dir() -> Path:
+    """Return the directory used for persisted phone-mode result artifacts."""
+    return get_phone_action_log_path().parent / "phone-results"
+
+
+def write_phone_action_artifact(
+    action: str,
+    suffix: str,
+    payload: str | bytes,
+) -> Path:
+    """Persist a phone-mode result artifact and return its path."""
+    artifact_dir = get_phone_action_artifact_dir()
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    artifact_path = artifact_dir / f"{timestamp}-{action}{suffix}"
+    if isinstance(payload, bytes):
+        artifact_path.write_bytes(payload)
+    else:
+        artifact_path.write_text(payload, encoding="utf-8")
+    return artifact_path
+
+
 class PhoneActionLogger:
     """Context manager that owns the action-log lifecycle for ``run_phone``.
 
@@ -104,7 +126,20 @@ class PhoneActionLogger:
             return False
 
         if exc_type is SystemExit:
-            # Don't overwrite status or print anything; let it propagate.
+            exit_code = getattr(exc_val, "code", 1)
+            if exit_code not in (0, None) and self.entry.get("status") == "started":
+                self.entry["status"] = "error"
+                self.entry["error"] = "Command exited before completing successfully."
+                self.log_path = append_phone_action_log(self.entry)
+                print("STATUS: ERROR")
+                print("ERROR: Command exited before completing successfully.")
+                print(
+                    "HOW_TO_FIX: Run `phone-use phone doctor` to verify device setup, "
+                    "then retry the command."
+                )
+                print(f"ACTION_LOG: {self.log_path}")
+                return False
+
             self.log_path = append_phone_action_log(self.entry)
             return False
 
@@ -112,6 +147,15 @@ class PhoneActionLogger:
         self.entry["status"] = "error"
         self.entry["error"] = str(exc_val)
         self.log_path = append_phone_action_log(self.entry)
-        print(f"Error: {exc_val}")
-        print(f"Action log written to: {self.log_path}")
+        correction = getattr(exc_val, "correction", None)
+        print("STATUS: ERROR")
+        print(f"ERROR: {exc_val}")
+        if correction:
+            print(f"HOW_TO_FIX: {correction}")
+        else:
+            print(
+                "HOW_TO_FIX: Run `phone-use phone doctor` to verify device setup, "
+                "then retry the command."
+            )
+        print(f"ACTION_LOG: {self.log_path}")
         sys.exit(1)
