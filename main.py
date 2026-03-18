@@ -15,31 +15,23 @@ Environment Variables:
 """
 
 import argparse
-import base64
 import json
 import os
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+
 
 from openai import OpenAI
 
 from phone_agent import PhoneAgent
 from phone_agent.actions.handler import summarize_ui_tree_for_model
+from phone_agent.actions.phone_handlers import get_phone_handler
 from phone_agent.agent import AgentConfig
 from phone_agent.agent_ios import IOSAgentConfig, IOSPhoneAgent
-from phone_agent.config.apps import get_app_name as get_android_app_name
-from phone_agent.config.apps_harmonyos import get_app_name as get_harmony_app_name
-from phone_agent.config.apps_ios import get_app_name as get_ios_app_name
 from phone_agent.device_factory import DeviceType, get_device_factory, set_device_type
 from phone_agent.model import ModelConfig
-from phone_agent.phone_mode_logging import (
-    MUTATING_PHONE_ACTIONS,
-    append_phone_action_log,
-    assess_state_change,
-    hash_screenshot_base64,
-)
+from phone_agent.phone_mode_logging import PhoneActionLogger
 from phone_agent.xctest import XCTestConnection
 from phone_agent.xctest import list_devices as list_ios_devices
 
@@ -344,8 +336,8 @@ def run_phone_doctor(
         return False
 
     if device_type == DeviceType.ADB:
-        print("4. Preparing ADB Keyboard for direct control...", end=" ")
-        if ensure_phone_control_ready(device_type, device_id=device_id, verbose=False):
+        print("Preparing ADB Keyboard for direct control...", end=" ")
+        if ensure_phone_control_ready(device_type, device_id=device_id):
             print("✅ OK")
         else:
             print("❌ FAILED")
@@ -1028,14 +1020,15 @@ def handle_device_commands(args) -> bool:
     return False
 
 
-def run_direct_phone(args: argparse.Namespace) -> None:
+def run_phone(args: argparse.Namespace) -> None:
     """
     Execute a direct phone control command without running the AI agent.
 
-    Dispatches to the appropriate device backend (ADB / HDC / iOS) based on
-    --device-type, then calls the requested action and prints the result.
+    Dispatches to the appropriate device backend (ADB / HDC / iOS) via a
+    ``PhoneHandler`` subclass, then calls the requested action and logs the
+    result.
     """
-    # Resolve device type from whichever parser captured it (parent or phone sub-parser).
+    # Resolve device type from whichever parser captured it.
     device_type_str: str = getattr(args, "device_type", "adb")
     device_id: str | None = getattr(args, "device_id", None)
     wda_url: str = getattr(args, "wda_url", "http://localhost:8100")
@@ -1050,22 +1043,11 @@ def run_direct_phone(args: argparse.Namespace) -> None:
     # --- resolve action name (may be None if user typed just 'phone') ---
     action: str | None = getattr(args, "phone_action", None)
     if not action:
-        # Print usage hint and exit
-        print("Usage: python main.py phone <action> [options]")
-        print("Run 'python main.py phone --help' for available actions.")
+        print("Usage: phone-use phone <action> [options]")
+        print("Run 'phone-use phone --help' for available actions.")
         sys.exit(1)
 
-    action_log = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "command": "phone",
-        "action": action,
-        "device_type": device_type.value,
-        "device_id": device_id,
-        "cwd": os.getcwd(),
-        "argv": sys.argv,
-        "status": "started",
-    }
-
+    # -- lifecycle actions that don't need a handler or log entry -------
     if action == "doctor":
         if not run_phone_doctor(device_type, device_id=device_id, wda_url=wda_url):
             sys.exit(1)
@@ -1093,559 +1075,13 @@ def run_direct_phone(args: argparse.Namespace) -> None:
             sys.exit(1)
         return
 
-    def _capture_phone_state(get_current_app, get_screenshot) -> dict:
-        snapshot = {}
-        try:
-            snapshot["current_app"] = get_current_app()
-        except Exception as exc:
-            snapshot["current_app_error"] = str(exc)
-
-        try:
-            shot = get_screenshot()
-            snapshot["screen_width"] = shot.width
-            snapshot["screen_height"] = shot.height
-            snapshot["screenshot_sha256"] = hash_screenshot_base64(shot.base64_data)
-        except Exception as exc:
-            snapshot["screenshot_error"] = str(exc)
-
-        return snapshot
-
-    def _log_phone_action(**fields) -> str:
-        action_log.update(fields)
-        return str(append_phone_action_log(action_log))
-
-    def _record_no_change_note(log_path: str) -> None:
-        state_change = action_log.get("state_change", {})
-        if state_change.get("likely_no_visible_change"):
-            print(
-                "Note: command completed, but the current app and screenshot did not change. "
-                f"Check the log for details: {log_path}"
-            )
-
-    def _print_labeled_apps(
-        identifiers: list[str], lookup_label, heading: str, note: str | None = None
-    ) -> None:
-        print(heading)
-        for identifier in identifiers:
-            label = lookup_label(identifier)
-            if label:
-                print(f"  - {label} ({identifier})")
-            else:
-                print(f"  - {identifier}")
-        if note:
-            print(f"\nNote: {note}")
-
-    def _run_tool_capture(cmd: list[str], timeout: int = 5) -> str | None:
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=timeout,
-            )
-        except Exception:
-            return None
-
-        if result.returncode != 0:
-            return None
-
-        return result.stdout.strip() or None
-
-    def _parse_prefixed_value(output: str | None, prefix: str) -> str | None:
-        if not output:
-            return None
-
-        for line in output.splitlines():
-            line = line.strip()
-            if line.startswith(prefix):
-                return line.split(":", 1)[1].strip()
-
-        return None
-
-    def _get_android_device_info() -> dict[str, str]:
-        cmd = ["adb"]
-        if device_id:
-            cmd.extend(["-s", device_id])
-
-        info: dict[str, str] = {}
-
-        model = _run_tool_capture(cmd + ["shell", "getprop", "ro.product.model"])
-        manufacturer = _run_tool_capture(
-            cmd + ["shell", "getprop", "ro.product.manufacturer"]
-        )
-        android_version = _run_tool_capture(
-            cmd + ["shell", "getprop", "ro.build.version.release"]
-        )
-        physical_size = _parse_prefixed_value(
-            _run_tool_capture(cmd + ["shell", "wm", "size"]), "Physical size"
-        )
-        density = _parse_prefixed_value(
-            _run_tool_capture(cmd + ["shell", "wm", "density"]), "Physical density"
-        )
-
-        if manufacturer and model:
-            info["Device"] = f"{manufacturer} {model}"
-        elif model:
-            info["Device"] = model
-
-        if android_version:
-            info["Android version"] = android_version
-        if physical_size:
-            info["Physical size"] = physical_size
-        if density:
-            info["Physical density"] = density
-
-        return info
-
-    def _get_ios_device_info(
-        shot_width: int | None = None, shot_height: int | None = None
-    ) -> dict[str, str]:
-        from phone_agent.xctest.device import get_screen_size
-
-        info: dict[str, str] = {}
-        device_info = conn.get_device_info(device_id=device_id)
-
-        if device_info:
-            if device_info.device_name:
-                info["Device"] = device_info.device_name
-            if device_info.model:
-                info["Model"] = device_info.model
-            if device_info.ios_version:
-                info["iOS version"] = device_info.ios_version
-
-        if shot_width and shot_height:
-            info["Physical size"] = f"{shot_width}x{shot_height}"
-
-        try:
-            logical_width, logical_height = get_screen_size(
-                wda_url=wda_url, session_id=session_id
-            )
-        except Exception:
-            logical_width = logical_height = None
-
-        if logical_width and logical_height:
-            info["Logical size"] = f"{logical_width}x{logical_height}"
-
-        return info
-
-    # ------------------------------------------------------------------ #
-    # iOS — delegate everything through xctest module + WDA session       #
-    # ------------------------------------------------------------------ #
-    if device_type == DeviceType.IOS:
-        import phone_agent.xctest as xctest
-        from phone_agent.xctest import XCTestConnection
-
-        conn = XCTestConnection(wda_url=wda_url)
-        if not conn.is_wda_ready(timeout=5):
-            print(f"Error: WebDriverAgent is not reachable at {wda_url}")
-            print("Make sure WDA is running and port forwarding is set up.")
-            sys.exit(1)
-
-        ok, session_id = conn.start_wda_session()
-        if not ok or not session_id:
-            print("Error: Failed to create a WDA session.")
-            sys.exit(1)
-
-        action_log["wda_url"] = wda_url
-        action_log["wda_session_id"] = session_id
-
-        before_state = None
-        if action in MUTATING_PHONE_ACTIONS:
-            before_state = _capture_phone_state(
-                lambda: xctest.get_current_app(wda_url=wda_url, session_id=session_id),
-                lambda: xctest.get_screenshot(
-                    wda_url=wda_url,
-                    session_id=session_id,
-                    device_id=device_id,
-                ),
-            )
-            action_log["before"] = before_state
-
-        try:
-            if action == "tap":
-                xctest.tap(
-                    args.x,
-                    args.y,
-                    wda_url=wda_url,
-                    session_id=session_id,
-                    delay=args.delay if args.delay is not None else 1.0,
-                )
-                print(f"Tapped ({args.x}, {args.y})")
-                action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
-
-            elif action == "double-tap":
-                xctest.double_tap(
-                    args.x,
-                    args.y,
-                    wda_url=wda_url,
-                    session_id=session_id,
-                    delay=args.delay if args.delay is not None else 1.0,
-                )
-                print(f"Double-tapped ({args.x}, {args.y})")
-                action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
-
-            elif action == "long-press":
-                xctest.long_press(
-                    args.x,
-                    args.y,
-                    duration=args.duration_ms / 1000.0,
-                    wda_url=wda_url,
-                    session_id=session_id,
-                    delay=args.delay if args.delay is not None else 1.0,
-                )
-                print(f"Long-pressed ({args.x}, {args.y}) for {args.duration_ms} ms")
-                action_log["params"] = {
-                    "x": args.x,
-                    "y": args.y,
-                    "duration_ms": args.duration_ms,
-                    "delay": args.delay,
-                }
-
-            elif action == "swipe":
-                xctest.swipe(
-                    args.start_x,
-                    args.start_y,
-                    args.end_x,
-                    args.end_y,
-                    duration=args.duration_ms / 1000.0 if args.duration_ms else None,
-                    wda_url=wda_url,
-                    session_id=session_id,
-                    delay=args.delay if args.delay is not None else 1.0,
-                )
-                print(
-                    f"Swiped ({args.start_x}, {args.start_y}) -> ({args.end_x}, {args.end_y})"
-                )
-                action_log["params"] = {
-                    "start_x": args.start_x,
-                    "start_y": args.start_y,
-                    "end_x": args.end_x,
-                    "end_y": args.end_y,
-                    "duration_ms": args.duration_ms,
-                    "delay": args.delay,
-                }
-
-            elif action == "type":
-                from phone_agent.xctest.input import type_text as xctest_type
-
-                xctest_type(args.text, wda_url=wda_url, session_id=session_id)
-                print(f"Typed: {args.text!r}")
-                action_log["params"] = {"text": args.text}
-
-            elif action == "clear":
-                from phone_agent.xctest.input import clear_text as xctest_clear
-
-                xctest_clear(wda_url=wda_url, session_id=session_id)
-                print("Cleared text")
-                action_log["params"] = {}
-
-            elif action == "back":
-                xctest.back(
-                    wda_url=wda_url,
-                    session_id=session_id,
-                    delay=args.delay if args.delay is not None else 1.0,
-                )
-                print("Pressed back")
-                action_log["params"] = {"delay": args.delay}
-
-            elif action == "home":
-                xctest.home(
-                    wda_url=wda_url,
-                    session_id=session_id,
-                    delay=args.delay if args.delay is not None else 1.0,
-                )
-                print("Went to home screen")
-                action_log["params"] = {"delay": args.delay}
-
-            elif action == "launch":
-                success = xctest.launch_app(
-                    args.app_name,
-                    wda_url=wda_url,
-                    session_id=session_id,
-                    delay=args.delay if args.delay is not None else 1.0,
-                )
-                if success:
-                    print(f"Launched: {args.app_name}")
-                    action_log["params"] = {
-                        "app_name": args.app_name,
-                        "delay": args.delay,
-                    }
-                else:
-                    raise ValueError(
-                        f"Could not launch app '{args.app_name}'. "
-                        "Run 'phone-use phone list-apps' to inspect installed apps. If the app is not in the registry map, pass its raw package name"
-                    )
-
-            elif action == "screenshot":
-                from phone_agent.xctest.screenshot import (
-                    get_screenshot as xctest_screenshot,
-                )
-
-                shot = xctest_screenshot(
-                    wda_url=wda_url, session_id=session_id, device_id=device_id
-                )
-                png_bytes = base64.b64decode(shot.base64_data)
-                with open(args.output, "wb") as f:
-                    f.write(png_bytes)
-                print(
-                    f"Screenshot saved to: {args.output} ({shot.width}x{shot.height})"
-                )
-                action_log["params"] = {"output": args.output}
-                action_log["result"] = {
-                    "output": os.path.abspath(args.output),
-                    "width": shot.width,
-                    "height": shot.height,
-                    "screenshot_sha256": hash_screenshot_base64(shot.base64_data),
-                }
-
-            elif action == "current-app":
-                app = xctest.get_current_app(wda_url=wda_url, session_id=session_id)
-                print(f"Current app: {app}")
-                action_log["result"] = {"current_app": app}
-
-            elif action == "list-apps":
-                bundle_ids = xctest.list_installed_apps(device_id=device_id)
-                _print_labeled_apps(
-                    bundle_ids,
-                    get_ios_app_name,
-                    "Installed iOS apps:",
-                    "labels from `phone_agent/config/apps_ios.py` are shown when known; otherwise the bundle id is printed.",
-                )
-                action_log["result"] = {"installed_app_count": len(bundle_ids)}
-
-            elif action == "state":
-                shot = xctest.get_screenshot(
-                    wda_url=wda_url,
-                    session_id=session_id,
-                    device_id=device_id,
-                )
-                state = xctest.get_ui_tree(
-                    wda_url=wda_url,
-                    session_id=session_id,
-                    screen_width=shot.width,
-                    screen_height=shot.height,
-                )
-                state["device_info"] = _get_ios_device_info(shot.width, shot.height)
-                _print_or_save_state(state, args.output)
-                action_log["params"] = {"output": args.output}
-                action_log["result"] = {
-                    "device_info": state.get("device_info"),
-                    "node_count": state.get("node_count"),
-                    "output": os.path.abspath(args.output) if args.output else None,
-                }
-
-            if action in MUTATING_PHONE_ACTIONS:
-                after_state = _capture_phone_state(
-                    lambda: xctest.get_current_app(
-                        wda_url=wda_url, session_id=session_id
-                    ),
-                    lambda: xctest.get_screenshot(
-                        wda_url=wda_url,
-                        session_id=session_id,
-                        device_id=device_id,
-                    ),
-                )
-                action_log["after"] = after_state
-                action_log["state_change"] = assess_state_change(
-                    before_state, after_state
-                )
-
-            log_path = _log_phone_action(status="success")
-            _record_no_change_note(log_path)
-
-        except Exception as e:
-            log_path = _log_phone_action(status="error", error=str(e))
-            print(f"Error: {e}")
-            print(f"Action log written to: {log_path}")
-            sys.exit(1)
-        return
-
-    # ------------------------------------------------------------------ #
-    # Android (ADB) / HarmonyOS (HDC) — use DeviceFactory                #
-    # ------------------------------------------------------------------ #
-    set_device_type(device_type)
-
-    if device_type == DeviceType.HDC:
-        from phone_agent.hdc import set_hdc_verbose
-
-        set_hdc_verbose(False)  # keep phone commands clean; user can set env var
-        if action == "state":
-            print("Error: state is currently supported on adb and ios, not hdc.")
-            sys.exit(1)
-
-    factory = get_device_factory()
-
-    if device_type == DeviceType.ADB and not ensure_phone_control_ready(
-        device_type,
-        device_id=device_id,
-        verbose=False,
-    ):
-        sys.exit(1)
-
-    before_state = None
-    if action in MUTATING_PHONE_ACTIONS:
-        before_state = _capture_phone_state(
-            lambda: factory.get_current_app(device_id=device_id),
-            lambda: factory.get_screenshot(device_id=device_id),
-        )
-        action_log["before"] = before_state
-
-    try:
-        if action == "tap":
-            factory.tap(args.x, args.y, device_id=device_id, delay=args.delay)
-            print(f"Tapped ({args.x}, {args.y})")
-            action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
-
-        elif action == "double-tap":
-            factory.double_tap(args.x, args.y, device_id=device_id, delay=args.delay)
-            print(f"Double-tapped ({args.x}, {args.y})")
-            action_log["params"] = {"x": args.x, "y": args.y, "delay": args.delay}
-
-        elif action == "long-press":
-            factory.long_press(
-                args.x,
-                args.y,
-                duration_ms=args.duration_ms,
-                device_id=device_id,
-                delay=args.delay,
-            )
-            print(f"Long-pressed ({args.x}, {args.y}) for {args.duration_ms} ms")
-            action_log["params"] = {
-                "x": args.x,
-                "y": args.y,
-                "duration_ms": args.duration_ms,
-                "delay": args.delay,
-            }
-
-        elif action == "swipe":
-            factory.swipe(
-                args.start_x,
-                args.start_y,
-                args.end_x,
-                args.end_y,
-                duration_ms=args.duration_ms,
-                device_id=device_id,
-                delay=args.delay,
-            )
-            print(
-                f"Swiped ({args.start_x}, {args.start_y}) -> ({args.end_x}, {args.end_y})"
-            )
-            action_log["params"] = {
-                "start_x": args.start_x,
-                "start_y": args.start_y,
-                "end_x": args.end_x,
-                "end_y": args.end_y,
-                "duration_ms": args.duration_ms,
-                "delay": args.delay,
-            }
-
-        elif action == "type":
-            factory.type_text(args.text, device_id=device_id)
-            print(f"Typed: {args.text!r}")
-            action_log["params"] = {"text": args.text}
-
-        elif action == "clear":
-            factory.clear_text(device_id=device_id)
-            print("Cleared text")
-            action_log["params"] = {}
-
-        elif action == "back":
-            factory.back(device_id=device_id, delay=args.delay)
-            print("Pressed back")
-            action_log["params"] = {"delay": args.delay}
-
-        elif action == "home":
-            factory.home(device_id=device_id, delay=args.delay)
-            print("Went to home screen")
-            action_log["params"] = {"delay": args.delay}
-
-        elif action == "launch":
-            success = factory.launch_app(
-                args.app_name, device_id=device_id, delay=args.delay
-            )
-            if success:
-                print(f"Launched: {args.app_name}")
-                action_log["params"] = {
-                    "app_name": args.app_name,
-                    "delay": args.delay,
-                }
-            else:
-                dt = args.device_type
-                raise ValueError(
-                    f"Could not launch app '{args.app_name}'. "
-                    f"Run 'python main.py --device-type {dt} phone list-apps' to inspect installed apps. If the app is not in the registry map, pass its raw package name or bundle name instead of a numeric index."
-                )
-
-        elif action == "screenshot":
-            shot = factory.get_screenshot(device_id=device_id)
-            png_bytes = base64.b64decode(shot.base64_data)
-            with open(args.output, "wb") as f:
-                f.write(png_bytes)
-            print(f"Screenshot saved to: {args.output} ({shot.width}x{shot.height})")
-            action_log["params"] = {"output": args.output}
-            action_log["result"] = {
-                "output": os.path.abspath(args.output),
-                "width": shot.width,
-                "height": shot.height,
-                "screenshot_sha256": hash_screenshot_base64(shot.base64_data),
-            }
-
-        elif action == "current-app":
-            app = factory.get_current_app(device_id=device_id)
-            print(f"Current app: {app}")
-            action_log["result"] = {"current_app": app}
-
-        elif action == "list-apps":
-            packages = factory.list_installed_apps(device_id=device_id)
-            if device_type == DeviceType.HDC:
-                _print_labeled_apps(
-                    packages,
-                    get_harmony_app_name,
-                    "Installed HarmonyOS apps:",
-                    "labels from `phone_agent/config/apps_harmonyos.py` are shown when known; otherwise the bundle name is printed.",
-                )
-            else:
-                _print_labeled_apps(
-                    packages,
-                    get_android_app_name,
-                    "Installed Android apps:",
-                    "labels from `phone_agent/config/apps.py` are shown when known; otherwise the package name is printed.",
-                )
-            action_log["result"] = {"installed_app_count": len(packages)}
-
-        elif action == "state":
-            shot = factory.get_screenshot(device_id=device_id)
-            state = factory.get_ui_tree(
-                device_id=device_id,
-                screen_width=shot.width,
-                screen_height=shot.height,
-            )
-            if device_type == DeviceType.ADB:
-                state["device_info"] = _get_android_device_info()
-            _print_or_save_state(state, args.output)
-            action_log["params"] = {"output": args.output}
-            action_log["result"] = {
-                "device_info": state.get("device_info"),
-                "node_count": state.get("node_count"),
-                "output": os.path.abspath(args.output) if args.output else None,
-            }
-
-        if action in MUTATING_PHONE_ACTIONS:
-            after_state = _capture_phone_state(
-                lambda: factory.get_current_app(device_id=device_id),
-                lambda: factory.get_screenshot(device_id=device_id),
-            )
-            action_log["after"] = after_state
-            action_log["state_change"] = assess_state_change(before_state, after_state)
-
-        log_path = _log_phone_action(status="success")
-        _record_no_change_note(log_path)
-
-    except Exception as e:
-        log_path = _log_phone_action(status="error", error=str(e))
-        print(f"Error: {e}")
-        print(f"Action log written to: {log_path}")
-        sys.exit(1)
+    # -- build and set up the handler for this device type --------------
+    handler = get_phone_handler(device_type, device_id=device_id, wda_url=wda_url)
+    handler.setup()
+
+    # -- dispatch action under the logger context manager ---------------
+    with PhoneActionLogger(action, device_type.value, device_id) as log:
+        handler.run_action(action, args, log.entry)
 
 
 def _print_or_save_state(state: dict, output_path: str | None) -> None:
@@ -1677,7 +1113,7 @@ def main():
     # Phone mode — direct device control, no AI agent                    #
     # ------------------------------------------------------------------ #
     if getattr(args, "command", None) == "phone":
-        run_direct_phone(args)
+        run_phone(args)
         return
 
     # Set device type globally based on args

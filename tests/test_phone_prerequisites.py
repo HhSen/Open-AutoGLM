@@ -15,17 +15,17 @@ def test_run_direct_phone_prepares_adb_before_command(monkeypatch):
         )
     )
 
+    # Patch setup internals inside the handlers module (where they are imported).
     monkeypatch.setattr(
-        main,
-        "ensure_phone_control_ready",
-        lambda device_type, device_id=None, verbose=True: (
-            calls.append(("prepare", device_type.value, device_id, verbose)) or True
+        "phone_agent.actions.phone_handlers.ADBPhoneHandler.setup",
+        lambda self: (
+            calls.append(("prepare", self._device_type.value, self.device_id, False))
+            or setattr(self, "_factory", factory)
         ),
     )
-    monkeypatch.setattr(main, "set_device_type", lambda device_type: None)
-    monkeypatch.setattr(main, "get_device_factory", lambda: factory)
     monkeypatch.setattr(
-        main, "append_phone_action_log", lambda payload: "/tmp/log.jsonl"
+        "phone_agent.phone_mode_logging.append_phone_action_log",
+        lambda payload: "/tmp/log.jsonl",
     )
 
     args = argparse.Namespace(
@@ -35,7 +35,7 @@ def test_run_direct_phone_prepares_adb_before_command(monkeypatch):
         phone_action="current-app",
     )
 
-    main.run_direct_phone(args)
+    main.run_phone(args)
 
     assert calls == [
         ("prepare", "adb", "serial-1", False),
@@ -61,17 +61,17 @@ def test_run_direct_phone_doctor_dispatches_to_phone_doctor(monkeypatch):
         phone_action="doctor",
     )
 
-    main.run_direct_phone(args)
+    main.run_phone(args)
 
     assert calls == [("adb", "serial-1", "http://localhost:8100")]
 
 
 def test_run_direct_phone_exits_when_prepare_fails(monkeypatch):
+    # Simulate setup() raising SystemExit (e.g. keyboard not available).
     monkeypatch.setattr(
-        main, "ensure_phone_control_ready", lambda *args, **kwargs: False
+        "phone_agent.actions.phone_handlers.ADBPhoneHandler.setup",
+        lambda self: (_ for _ in ()).throw(SystemExit(1)),
     )
-    monkeypatch.setattr(main, "set_device_type", lambda device_type: None)
-    monkeypatch.setattr(main, "get_device_factory", lambda: SimpleNamespace())
 
     args = argparse.Namespace(
         device_type="adb",
@@ -81,23 +81,19 @@ def test_run_direct_phone_exits_when_prepare_fails(monkeypatch):
     )
 
     with pytest.raises(SystemExit):
-        main.run_direct_phone(args)
+        main.run_phone(args)
 
 
 def test_run_direct_phone_launch_failure_has_clear_package_hint(monkeypatch, capsys):
+    factory = SimpleNamespace(launch_app=lambda *args, **kwargs: False)
+
     monkeypatch.setattr(
-        main,
-        "ensure_phone_control_ready",
-        lambda device_type, device_id=None, verbose=True: True,
-    )
-    monkeypatch.setattr(main, "set_device_type", lambda device_type: None)
-    monkeypatch.setattr(
-        main,
-        "get_device_factory",
-        lambda: SimpleNamespace(launch_app=lambda *args, **kwargs: False),
+        "phone_agent.actions.phone_handlers.ADBPhoneHandler.setup",
+        lambda self: setattr(self, "_factory", factory),
     )
     monkeypatch.setattr(
-        main, "append_phone_action_log", lambda payload: "/tmp/log.jsonl"
+        "phone_agent.phone_mode_logging.append_phone_action_log",
+        lambda payload: "/tmp/log.jsonl",
     )
 
     args = argparse.Namespace(
@@ -110,7 +106,7 @@ def test_run_direct_phone_launch_failure_has_clear_package_hint(monkeypatch, cap
     )
 
     with pytest.raises(SystemExit):
-        main.run_direct_phone(args)
+        main.run_phone(args)
 
     captured = capsys.readouterr()
     assert "raw package name or bundle name" in captured.out

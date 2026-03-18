@@ -2,25 +2,14 @@
 
 from __future__ import annotations
 
-import base64
-import hashlib
 import json
 import os
 import platform
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from types import TracebackType
 from typing import Any
-
-MUTATING_PHONE_ACTIONS = {
-    "tap",
-    "double-tap",
-    "long-press",
-    "swipe",
-    "type",
-    "clear",
-    "back",
-    "home",
-    "launch",
-}
 
 
 def get_phone_action_log_path() -> Path:
@@ -59,46 +48,70 @@ def append_phone_action_log(entry: dict[str, Any]) -> Path:
     return log_path
 
 
-def hash_screenshot_base64(base64_data: str) -> str:
-    """Return a stable fingerprint for screenshot bytes."""
-    return hashlib.sha256(base64.b64decode(base64_data)).hexdigest()
+class PhoneActionLogger:
+    """Context manager that owns the action-log lifecycle for ``run_phone``.
 
+    Logs only the action inputs and the execution outcome (success or error).
+    No device round-trips are made for logging purposes.
 
-def assess_state_change(
-    before: dict[str, Any] | None, after: dict[str, Any] | None
-) -> dict[str, bool | None]:
-    """Compare before/after snapshots for lightweight no-op detection."""
-    if not before or not after:
-        return {
-            "current_app_changed": None,
-            "visible_changed": None,
-            "likely_no_visible_change": None,
+    Usage::
+
+        with PhoneActionLogger(action, device_type, device_id) as log:
+            handler.run_action(action, args, log.entry)
+        # On clean exit the entry is written with status="success".
+        # On exception the entry is written with status="error" and the
+        # process exits after printing a user-facing message.
+
+    Attributes
+    ----------
+    entry:
+        The mutable log dict.  Action handlers that accept an ``action_log``
+        argument may add their own output keys to this reference.
+    log_path:
+        Set after ``__exit__`` completes; the path where the entry was appended.
+    """
+
+    def __init__(
+        self,
+        action: str,
+        device_type_value: str,
+        device_id: str | None,
+    ) -> None:
+        self.entry: dict[str, Any] = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "command": "phone",
+            "action": action,
+            "device_type": device_type_value,
+            "device_id": device_id,
+            "cwd": os.getcwd(),
+            "argv": sys.argv,
+            "status": "started",
         }
+        self.log_path: Path | None = None
 
-    before_app = before.get("current_app")
-    after_app = after.get("current_app")
-    before_hash = before.get("screenshot_sha256")
-    after_hash = after.get("screenshot_sha256")
+    def __enter__(self) -> "PhoneActionLogger":
+        return self
 
-    current_app_changed = (
-        before_app != after_app
-        if before_app is not None and after_app is not None
-        else None
-    )
-    visible_changed = (
-        before_hash != after_hash
-        if before_hash is not None and after_hash is not None
-        else None
-    )
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool:
+        if exc_type is None:
+            self.entry["status"] = "success"
+            self.log_path = append_phone_action_log(self.entry)
+            return False
 
-    likely_no_visible_change = None
-    if current_app_changed is False and visible_changed is False:
-        likely_no_visible_change = True
-    elif current_app_changed is True or visible_changed is True:
-        likely_no_visible_change = False
+        if exc_type is SystemExit:
+            # Don't overwrite status or print anything; let it propagate.
+            self.log_path = append_phone_action_log(self.entry)
+            return False
 
-    return {
-        "current_app_changed": current_app_changed,
-        "visible_changed": visible_changed,
-        "likely_no_visible_change": likely_no_visible_change,
-    }
+        # Unexpected exception — record, surface to the user, then exit cleanly.
+        self.entry["status"] = "error"
+        self.entry["error"] = str(exc_val)
+        self.log_path = append_phone_action_log(self.entry)
+        print(f"Error: {exc_val}")
+        print(f"Action log written to: {self.log_path}")
+        sys.exit(1)
